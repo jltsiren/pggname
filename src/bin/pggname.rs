@@ -121,7 +121,7 @@ fn read_gfa<G: Graph>(filename: &str) -> Result<G, String> {
     }
     graph.finalize();
     if !graph.is_valid() {
-        return Err(String::from("Error: some nodes required by the edges are missing"));
+        return Err(String::from("Some nodes required by the edges are missing"));
     }
 
     let duration = start_time.elapsed();

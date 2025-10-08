@@ -7,8 +7,9 @@ The names are based on hashing a canonical GFA representation of the graph.
 
 * Graphs in GBZ and GFA formats.
 * Node identifiers interpreted as integers or strings.
-    * String identifiers are more general, and using them is faster but requires more memory.
     * The canonical order of the nodes depends on the type of the identifiers.
+    * Using string identifiers requires more memory.
+    * String identifiers are faster with GFA graphs and slower with GBZ graphs.
 * All SHA-2 variants.
 
 ## Intended applications

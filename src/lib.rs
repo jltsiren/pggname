@@ -245,7 +245,7 @@ impl Graph for GraphStr {
         let name = name.to_vec();
         if let Some(node) = self.nodes.get_mut(&name) {
             if node.seen && sequence != node.sequence {
-                let msg = format!("Node {} already exists with a different sequence.", String::from_utf8_lossy(&name));
+                let msg = format!("Node {} already exists with a different sequence", String::from_utf8_lossy(&name));
                 return Err(msg);
             }
             // If the node already exists, update its sequence.
@@ -338,7 +338,7 @@ impl GraphInt {
         let id = name_str.parse::<usize>()
             .map_err(|e| format!("Error parsing node name {}: {}", String::from_utf8_lossy(name), e))?;
         if id == 0 {
-            return Err(String::from("Error: node identifier 0 is reserved for technical purposes"));
+            return Err(String::from("Node identifier 0 is reserved for technical purposes"));
         }
         Ok(id)
     }
@@ -358,7 +358,7 @@ impl Graph for GraphInt {
             .map_err(|e| format!("Error parsing node name {}: {}", String::from_utf8_lossy(name), e))?;
         if let Some(node) = self.nodes.get_mut(&id) {
             if node.seen && sequence != node.sequence {
-                let msg = format!("Node {} already exists with a different sequence.", String::from_utf8_lossy(&name));
+                let msg = format!("Node {} already exists with a different sequence", String::from_utf8_lossy(&name));
                 return Err(msg);
             }
             // If the node already exists, update its sequence.
