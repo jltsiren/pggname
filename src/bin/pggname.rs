@@ -119,10 +119,7 @@ fn read_gfa<G: Graph>(filename: &str) -> Result<G, String> {
             graph.add_edge(source_name, source_o, dest_name, dest_o)?;
         }
     }
-    graph.finalize();
-    if !graph.is_valid() {
-        return Err(String::from("Some nodes required by the edges are missing"));
-    }
+    graph.finalize()?;
 
     let duration = start_time.elapsed();
     let seconds = duration.as_secs_f64();
@@ -170,7 +167,7 @@ fn gbz_str_graph(filename: &str) -> Result<GraphStr, String> {
             }
         }
     }
-    graph.finalize();
+    graph.finalize()?;
 
     let duration = start_time.elapsed();
     let seconds = duration.as_secs_f64();

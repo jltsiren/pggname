@@ -200,10 +200,9 @@ pub trait Graph {
     fn add_edge(&mut self, source_name: &[u8], source_o: Orientation, dest_name: &[u8], dest_o: Orientation) -> Result<(), String>;
 
     /// Finalizes the graph by sorting and deduplicating edges.
-    fn finalize(&mut self);
-
-    /// Returns `true` if the graph is valid (if all nodes required by the edges have been seen).
-    fn is_valid(&self) -> bool;
+    ///
+    /// Returns an error if some nodes required by the edges are missing.
+    fn finalize(&mut self) -> Result<(), String>;
 
     /// Returns the number of nodes, the number of edges, and total sequence length in the graph.
     fn statistics(&self) -> (usize, usize, usize);
@@ -280,19 +279,18 @@ impl Graph for GraphStr {
         Ok(())
     }
 
-    fn finalize(&mut self) {
+    fn finalize(&mut self) -> Result<(), String> {
+        let mut unseen = 0;
         for node in self.nodes.values_mut() {
             node.finalize();
-        }
-    }
-
-    fn is_valid(&self) -> bool {
-        for node in self.nodes.values() {
             if !node.seen {
-                return false;
+                unseen += 1;
             }
         }
-        true
+        if unseen > 0 {
+            return Err(format!("{} nodes required by the edges are missing", unseen));
+        }
+        Ok(())
     }
 
     fn statistics(&self) -> (usize, usize, usize) {
@@ -396,19 +394,18 @@ impl Graph for GraphInt {
         Ok(())
     }
 
-    fn finalize(&mut self) {
+    fn finalize(&mut self) -> Result<(), String> {
+        let mut unseen = 0;
         for node in self.nodes.values_mut() {
             node.finalize();
-        }
-    }
-
-    fn is_valid(&self) -> bool {
-        for node in self.nodes.values() {
             if !node.seen {
-                return false;
+                unseen += 1;
             }
         }
-        true
+        if unseen > 0 {
+            return Err(format!("{} nodes required by the edges are missing", unseen));
+        }
+        Ok(())
     }
 
     fn statistics(&self) -> (usize, usize, usize) {
@@ -441,12 +438,8 @@ impl Graph for GBZ {
         unimplemented!()
     }
 
-    fn finalize(&mut self) {
-        // Nothing to do.
-    }
-
-    fn is_valid(&self) -> bool {
-        true
+    fn finalize(&mut self) -> Result<(), String> {
+        Ok(())
     }
 
     fn statistics(&self) -> (usize, usize, usize) {
