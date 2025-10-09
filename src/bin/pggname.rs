@@ -1,9 +1,8 @@
-use gbwt::{GBZ, Orientation};
-use gbwt::support;
+use gbwt::GBZ;
 
 use getopts::Options;
 
-use pggname::{Graph, GraphStr, GraphInt};
+use pggname::{Graph, GraphStr, GraphInt, GBZStr, GBZInt};
 
 use sha2::{Digest, Sha224, Sha256, Sha384, Sha512_224, Sha512_256, Sha512};
 use sha2::digest;
@@ -21,12 +20,15 @@ fn main() -> Result<(), String> {
     let config = Config::new()?;
 
     if config.gbz_input {
+        let graph = read_gbz(&config.input_file)?;
         if config.integer_ids {
-            let graph = read_gbz(&config.input_file)?;
-            benchmark_all::<GBZ>(&graph);
+            let graph = GBZInt { graph };
+            print_statistics(&graph);
+            benchmark_all::<GBZInt>(&graph);
         } else {
-            let graph = gbz_str_graph(&config.input_file)?;
-            benchmark_all::<GraphStr>(&graph);
+            let graph = GBZStr { graph };
+            print_statistics(&graph);
+            benchmark_all::<GBZStr>(&graph);
         }
     } else {
         if config.integer_ids {
@@ -141,40 +143,6 @@ fn read_gbz(filename: &str) -> Result<GBZ, String> {
     let seconds = duration.as_secs_f64();
     eprintln!("Loaded the graph in {:.3} seconds", seconds);
     eprintln!();
-
-    print_statistics(&graph);
-
-    Ok(graph)
-}
-
-fn gbz_str_graph(filename: &str) -> Result<GraphStr, String> {
-    let start_time = Instant::now();
-
-    let gbz: GBZ = serialize::load_from(filename)
-        .map_err(|e| format!("Error loading GBZ file {}: {}", filename, e))?;
-
-    let mut graph = GraphStr::new();
-    for source_id in gbz.node_iter() {
-        let source_name = source_id.to_string();
-        let seq = gbz.sequence(source_id).unwrap_or(&[]);
-        graph.add_node(source_name.as_bytes(), seq)?;
-        for source_o in [Orientation::Forward, Orientation::Reverse] {
-            for (dest_id, dest_o) in gbz.successors(source_id, source_o).unwrap() {
-                if support::edge_is_canonical((source_id, source_o), (dest_id, dest_o)) {
-                    let dest_name = dest_id.to_string();
-                    graph.add_edge(source_name.as_bytes(), source_o, dest_name.as_bytes(), dest_o)?;
-                }
-            }
-        }
-    }
-    graph.finalize()?;
-
-    let duration = start_time.elapsed();
-    let seconds = duration.as_secs_f64();
-    eprintln!("Parsed the graph in {:.3} seconds", seconds);
-    eprintln!();
-
-    print_statistics(&graph);
 
     Ok(graph)
 }
