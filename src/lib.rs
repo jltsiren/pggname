@@ -529,7 +529,8 @@ impl Graph for GBZStr {
     }
 
     fn node_iter(&self) -> impl Iterator<Item=Vec<u8>> {
-        let ordered_nodes: BTreeMap<String, usize> = self.graph.node_iter().map(|id| (id.to_string(), id)).collect();
+        let mut ordered_nodes: Vec<(String, usize)> = self.graph.node_iter().map(|id| (id.to_string(), id)).collect();
+        ordered_nodes.sort_by(|a, b| a.0.cmp(&b.0));
 
         ordered_nodes.into_iter().map(|(source_name, source_id)| {
             let sequence = self.graph.sequence(source_id).unwrap_or(&[]);
