@@ -3,6 +3,8 @@
 This is a prototype for generating stable names for pangenome graphs.
 The names are based on hashing a canonical GFA representation of the graph.
 
+See [refget](https://ga4gh.github.io/refget/) for a similar naming scheme for sequences.
+
 ## Implemented versions
 
 * Graphs in GBZ and GFA formats.
@@ -11,6 +13,14 @@ The names are based on hashing a canonical GFA representation of the graph.
     * Using string identifiers requires more memory.
     * String identifiers are faster with GFA graphs and slower with GBZ graphs.
 * All SHA-2 variants.
+
+## Thoughts about a canonical version
+
+* Interpret node identifiers as integers if possible; fall back to string identifiers if not.
+    * This allows using the natural order as the canonical order in common cases.
+* Use a variant of SHA-512 as the hash.
+    * SHA-512 is faster than SHA-256 on relevant hardware.
+    * Truncate the hashes to a reasonable length.
 
 ## Intended applications
 
@@ -28,6 +38,8 @@ For each node, in sorted order, output:
 
 * S-line for the node without optional fields.
 * L-lines for all canonical edges, without the overlap field or optional fields, in sorted order.
+
+The canonical GFA representation of the graph does not include any other information, such as header lines, paths, or walks.
 
 An edge is canonical, if the source id is smaller than the destination id.
 A self-loop is canonical, if at least one of the nodes is in forward orientation.
