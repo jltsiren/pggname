@@ -20,23 +20,45 @@ fn main() -> Result<(), String> {
     let config = Config::new()?;
 
     if config.gbz_input {
-        let graph = read_gbz(&config.input_file)?;
+        let graph = read_gbz(&config)?;
         if config.integer_ids {
             let graph = GBZInt { graph };
-            print_statistics(&graph);
-            benchmark_all::<GBZInt>(&graph);
+            if config.benchmark {
+                print_statistics(&graph);
+                benchmark_all::<GBZInt>(&graph);
+            } else {
+                let hash = hash::<Sha256, GBZInt>(&graph);
+                println!("{}", hash);
+            }
         } else {
             let graph = GBZStr { graph };
-            print_statistics(&graph);
-            benchmark_all::<GBZStr>(&graph);
+            if config.benchmark {
+                print_statistics(&graph);
+                benchmark_all::<GBZStr>(&graph);
+            } else {
+                let hash = hash::<Sha256, GBZStr>(&graph);
+                println!("{}", hash);
+            }
         }
     } else {
         if config.integer_ids {
-            let graph = read_gfa::<GraphInt>(&config.input_file)?;
-            benchmark_all::<GraphInt>(&graph);
+            let graph = read_gfa::<GraphInt>(&config)?;
+            if config.benchmark {
+                print_statistics(&graph);
+                benchmark_all::<GraphInt>(&graph);
+            } else {
+                let hash = hash::<Sha256, GraphInt>(&graph);
+                println!("{}", hash);
+            }
         } else {
-            let graph = read_gfa::<GraphStr>(&config.input_file)?;
-            benchmark_all::<GraphStr>(&graph);
+            let graph = read_gfa::<GraphStr>(&config)?;
+            if config.benchmark {
+                print_statistics(&graph);
+                benchmark_all::<GraphStr>(&graph);
+            } else {
+                let hash = hash::<Sha256, GraphStr>(&graph);
+                println!("{}", hash);
+            }
         }
     }
 
@@ -49,6 +71,7 @@ struct Config {
     input_file: String,
     gbz_input: bool,
     integer_ids: bool,
+    benchmark: bool,
 }
 
 impl Config {
@@ -60,6 +83,7 @@ impl Config {
         let mut opts = Options::new();
         opts.optflag("g", "gbz", "input is a GBZ graph (default: GFA)");
         opts.optflag("i", "integer-ids", "use integer node identifiers");
+        opts.optflag("b", "benchmark", "run benchmarks");
         let matches = opts.parse(&args[1..]).map_err(|e| e.to_string())?;
 
         let input_file = if let Some(f) = matches.free.get(0) {
@@ -69,8 +93,9 @@ impl Config {
         };
         let gbz_input = matches.opt_present("g");
         let integer_ids = matches.opt_present("i");
+        let benchmark = matches.opt_present("b");
 
-        Ok(Config { input_file, gbz_input, integer_ids })
+        Ok(Config { input_file, gbz_input, integer_ids, benchmark })
     }
 }
 
@@ -85,13 +110,13 @@ fn print_statistics<G: Graph>(graph: &G) {
     eprintln!();
 }
 
-fn read_gfa<G: Graph>(filename: &str) -> Result<G, String> {
+fn read_gfa<G: Graph>(config: &Config) -> Result<G, String> {
     let start_time = Instant::now();
 
     // Open the input GFA file.
     let mut options = OpenOptions::new();
-    let gfa_file = options.read(true).open(filename)
-        .map_err(|e| format!("Error opening GFA file {}: {}", filename, e))?;
+    let gfa_file = options.read(true).open(&config.input_file)
+        .map_err(|e| format!("Error opening GFA file {}: {}", config.input_file, e))?;
     let reader = BufReader::new(gfa_file);
 
     // Read and validate the graph.
@@ -125,24 +150,27 @@ fn read_gfa<G: Graph>(filename: &str) -> Result<G, String> {
 
     let duration = start_time.elapsed();
     let seconds = duration.as_secs_f64();
-    eprintln!("Parsed the graph in {:.3} seconds", seconds);
-    eprintln!();
-
-    print_statistics(&graph);
+    if config.benchmark {
+        eprintln!("Parsed the graph in {:.3} seconds", seconds);
+        eprintln!();
+        print_statistics(&graph);
+    }
 
     Ok(graph)
 }
 
-fn read_gbz(filename: &str) -> Result<GBZ, String> {
+fn read_gbz(config: &Config) -> Result<GBZ, String> {
     let start_time = Instant::now();
 
-    let graph: GBZ = serialize::load_from(filename)
-        .map_err(|e| format!("Error loading GBZ file {}: {}", filename, e))?;
+    let graph: GBZ = serialize::load_from(&config.input_file)
+        .map_err(|e| format!("Error loading GBZ file {}: {}", config.input_file, e))?;
 
     let duration = start_time.elapsed();
     let seconds = duration.as_secs_f64();
-    eprintln!("Loaded the graph in {:.3} seconds", seconds);
-    eprintln!();
+    if config.benchmark {
+        eprintln!("Loaded the GBZ graph in {:.3} seconds", seconds);
+        eprintln!();
+    }
 
     Ok(graph)
 }

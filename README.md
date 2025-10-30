@@ -14,13 +14,12 @@ See [refget](https://ga4gh.github.io/refget/) for a similar naming scheme for se
     * String identifiers are faster with GFA graphs and slower with GBZ graphs.
 * All SHA-2 variants.
 
-## Thoughts about a canonical version
+## Canonical version
 
 * Interpret node identifiers as integers if possible; fall back to string identifiers if not.
     * This allows using the natural order as the canonical order in common cases.
-* Use a variant of SHA-512 as the hash.
-    * SHA-512 is faster than SHA-256 on relevant hardware.
-    * Truncate the hashes to a reasonable length.
+* Use SHA-256 as the hash.
+    * SHA-512/256 would be faster, but it is not readily available on the command line.
 
 ## Intended applications
 
