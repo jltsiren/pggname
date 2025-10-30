@@ -12,52 +12,43 @@ use simple_sds::serialize;
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader};
 use std::time::Instant;
-use std::env;
+use std::{env, process};
 
 //-----------------------------------------------------------------------------
 
 fn main() -> Result<(), String> {
     let config = Config::new()?;
 
-    if config.gbz_input {
-        let graph = read_gbz(&config)?;
-        if config.integer_ids {
-            let graph = GBZInt { graph };
-            if config.benchmark {
-                print_statistics(&graph);
-                benchmark_all::<GBZInt>(&graph);
+    for input_file in config.input_files.iter() {
+        if GBZ::is_gbz(input_file) {
+            let graph = read_gbz(input_file, config.benchmark)?;
+            if config.node_ids == NodeIds::Integer || config.node_ids == NodeIds::Auto {
+                let graph = GBZInt { graph };
+                process(&graph, input_file, config.benchmark);
             } else {
-                let hash = hash::<Sha256, GBZInt>(&graph);
-                println!("{}", hash);
+                let graph = GBZStr { graph };
+                process(&graph, input_file, config.benchmark);
             }
         } else {
-            let graph = GBZStr { graph };
-            if config.benchmark {
-                print_statistics(&graph);
-                benchmark_all::<GBZStr>(&graph);
-            } else {
-                let hash = hash::<Sha256, GBZStr>(&graph);
-                println!("{}", hash);
-            }
-        }
-    } else {
-        if config.integer_ids {
-            let graph = read_gfa::<GraphInt>(&config)?;
-            if config.benchmark {
-                print_statistics(&graph);
-                benchmark_all::<GraphInt>(&graph);
-            } else {
-                let hash = hash::<Sha256, GraphInt>(&graph);
-                println!("{}", hash);
-            }
-        } else {
-            let graph = read_gfa::<GraphStr>(&config)?;
-            if config.benchmark {
-                print_statistics(&graph);
-                benchmark_all::<GraphStr>(&graph);
-            } else {
-                let hash = hash::<Sha256, GraphStr>(&graph);
-                println!("{}", hash);
+            match config.node_ids {
+                NodeIds::Integer => {
+                    let graph = read_gfa::<GraphInt>(input_file, config.benchmark)?;
+                    process(&graph, input_file, config.benchmark);
+                }
+                NodeIds::String => {
+                    let graph = read_gfa::<GraphStr>(input_file, config.benchmark)?;
+                    process(&graph, input_file, config.benchmark);
+                }
+                NodeIds::Auto => {
+                    let graph = read_gfa::<GraphInt>(input_file, config.benchmark);
+                    if graph.is_ok() {
+                        let graph = graph.unwrap();
+                        process(&graph, input_file, config.benchmark);
+                    } else {
+                        let graph = read_gfa::<GraphStr>(input_file, config.benchmark)?;
+                        process(&graph, input_file, config.benchmark);
+                    }
+                }
             }
         }
     }
@@ -67,10 +58,19 @@ fn main() -> Result<(), String> {
 
 //-----------------------------------------------------------------------------
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NodeIds {
+    // Use integer identifiers if possible, fall back to string identifiers.
+    Auto,
+    // Use integer identifiers.
+    Integer,
+    // Use string identifiers.
+    String,
+}
+
 struct Config {
-    input_file: String,
-    gbz_input: bool,
-    integer_ids: bool,
+    input_files: Vec<String>,
+    node_ids: NodeIds,
     benchmark: bool,
 }
 
@@ -78,45 +78,51 @@ impl Config {
     fn new() -> Result<Self, String> {
         let args: Vec<String> = env::args().collect();
         let program = args[0].clone();
-        let header = format!("Usage: {} [options] graph.[gbz|gfa]", &program);
+        let header = format!("Usage: {} [options] graph1 [graph2 ...]", &program);
 
         let mut opts = Options::new();
-        opts.optflag("g", "gbz", "input is a GBZ graph (default: GFA)");
         opts.optflag("i", "integer-ids", "use integer node identifiers");
+        opts.optflag("s", "string-ids", "use string node identifiers");
         opts.optflag("b", "benchmark", "run benchmarks");
         let matches = opts.parse(&args[1..]).map_err(|e| e.to_string())?;
 
-        let input_file = if let Some(f) = matches.free.get(0) {
-            f.clone()
+        let input_files = if !matches.free.is_empty() {
+            matches.free.clone()
         } else {
-            return Err(opts.usage(&header));
+            eprintln!("{}", opts.usage(&header));
+            process::exit(1);
         };
-        let gbz_input = matches.opt_present("g");
-        let integer_ids = matches.opt_present("i");
+        let node_ids = if matches.opt_present("i") {
+            NodeIds::Integer
+        } else if matches.opt_present("s") {
+            NodeIds::String
+        } else {
+            NodeIds::Auto
+        };
         let benchmark = matches.opt_present("b");
 
-        Ok(Config { input_file, gbz_input, integer_ids, benchmark })
+        Ok(Config { input_files, node_ids, benchmark })
     }
 }
 
 //-----------------------------------------------------------------------------
 
-fn print_statistics<G: Graph>(graph: &G) {
+fn print_statistics<G: Graph>(graph: &G, input_file: &str) {
     let (node_count, edge_count, seq_len) = graph.statistics();
-    eprintln!("Graph statistics:");
+    eprintln!("Graph {}:", input_file);
     eprintln!("  Nodes:    {}", node_count);
     eprintln!("  Edges:    {}", edge_count);
     eprintln!("  Sequence: {} bp", seq_len);
     eprintln!();
 }
 
-fn read_gfa<G: Graph>(config: &Config) -> Result<G, String> {
+fn read_gfa<G: Graph>(input_file: &str, benchmark: bool) -> Result<G, String> {
     let start_time = Instant::now();
 
     // Open the input GFA file.
     let mut options = OpenOptions::new();
-    let gfa_file = options.read(true).open(&config.input_file)
-        .map_err(|e| format!("Error opening GFA file {}: {}", config.input_file, e))?;
+    let gfa_file = options.read(true).open(input_file)
+        .map_err(|e| format!("Error opening GFA file {}: {}", input_file, e))?;
     let reader = BufReader::new(gfa_file);
 
     // Read and validate the graph.
@@ -150,24 +156,23 @@ fn read_gfa<G: Graph>(config: &Config) -> Result<G, String> {
 
     let duration = start_time.elapsed();
     let seconds = duration.as_secs_f64();
-    if config.benchmark {
+    if benchmark {
         eprintln!("Parsed the graph in {:.3} seconds", seconds);
         eprintln!();
-        print_statistics(&graph);
     }
 
     Ok(graph)
 }
 
-fn read_gbz(config: &Config) -> Result<GBZ, String> {
+fn read_gbz(input_file: &str, benchmark: bool) -> Result<GBZ, String> {
     let start_time = Instant::now();
 
-    let graph: GBZ = serialize::load_from(&config.input_file)
-        .map_err(|e| format!("Error loading GBZ file {}: {}", config.input_file, e))?;
+    let graph: GBZ = serialize::load_from(input_file)
+        .map_err(|e| format!("Error loading GBZ file {}: {}", input_file, e))?;
 
     let duration = start_time.elapsed();
     let seconds = duration.as_secs_f64();
-    if config.benchmark {
+    if benchmark {
         eprintln!("Loaded the GBZ graph in {:.3} seconds", seconds);
         eprintln!();
     }
@@ -176,6 +181,16 @@ fn read_gbz(config: &Config) -> Result<GBZ, String> {
 }
 
 //-----------------------------------------------------------------------------
+
+fn process<G: Graph>(graph: &G, input_file: &str, benchmark: bool) {
+    if benchmark {
+        print_statistics(graph, input_file);
+        benchmark_all::<G>(graph);
+    } else {
+        let hash = hash::<Sha256, G>(graph);
+        println!("{}  {}", hash, input_file);
+    }
+}
 
 fn hash<D: Digest, G: Graph>(graph: &G) -> String
     where digest::Output<D>: core::fmt::LowerHex {
