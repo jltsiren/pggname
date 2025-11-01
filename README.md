@@ -82,17 +82,17 @@ The forward orientation comes before the reverse orientation.
 
 ### Example
 
-Consider the following example graph from the GFA specification:
+Consider the following example graph from the GFA specification, with overlaps changed to `0M`:
 
 ```txt
 H	VN:Z:1.0
 S	11	ACCTT
 S	12	TCAAGG
 S	13	CTTGATT
-L	11	+	12	-	4M
-L	12	-	13	+	5M
-L	11	+	13	+	3M
-P	14	11+,12-,13+	4M,5M
+L	11	+	12	-	0M
+L	12	-	13	+	0M
+L	11	+	13	+	0M
+P	14	11+,12-,13+	0M,0M
 ```
 
 Its canonical GFA representation is:
