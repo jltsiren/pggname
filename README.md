@@ -80,6 +80,38 @@ A self-loop is canonical, if at least one of the nodes is in forward orientation
 Edges are sorted by (source orientation, destination id, destination orientation).
 The forward orientation comes before the reverse orientation.
 
+### Example
+
+Consider the following example graph from the GFA specification:
+
+```txt
+H	VN:Z:1.0
+S	11	ACCTT
+S	12	TCAAGG
+S	13	CTTGATT
+L	11	+	12	-	4M
+L	12	-	13	+	5M
+L	11	+	13	+	3M
+P	14	11+,12-,13+	4M,5M
+```
+
+Its canonical GFA representation is:
+
+```txt
+S	11	ACCTT
+L	11	+	12	-
+L	11	+	13	+
+S	12	TCAAGG
+L	12	-	13	+
+S	13	CTTGATT
+```
+
+And its stable name is:
+
+```txt
+54b49d18354a34fbd1af9aaac279e1b3ee67b2f68f0ff79f5ebf6c50c8d922a5
+```
+
 ## Canonical version
 
 * Interpret node identifiers as integers if possible; fall back to string identifiers if not.
