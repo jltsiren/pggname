@@ -1,7 +1,7 @@
 # Stable names for pangenome graphs
 
 This is a prototype for generating stable names for pangenome graphs.
-The names are based on hashing a canonical GFA representation of the graph.
+The names are SHA-256 hashes of a canonical GFA representation of the graph.
 
 See [refget](https://ga4gh.github.io/refget/) for a similar naming scheme for sequences.
 
@@ -66,6 +66,7 @@ Here we use `RN` (reference name) instead of `NM` (name).
 ## Canonical GFA format
 
 Sort the nodes by their identifiers.
+Interpret node identifiers as integers, if possible, and fall back to strings if at least one of the identifiers is not an integer.
 
 For each node, in sorted order, output:
 
@@ -112,16 +113,8 @@ And its stable name is:
 54b49d18354a34fbd1af9aaac279e1b3ee67b2f68f0ff79f5ebf6c50c8d922a5
 ```
 
-## Canonical version
-
-* Interpret node identifiers as integers if possible; fall back to string identifiers if not.
-    * This allows using the natural order as the canonical order in common cases.
-* Use SHA-256 as the hash.
-    * SHA-512/256 would be faster, but it is not readily available on the command line.
-
 ## Other versions
 
-* Graphs in GBZ and GFA formats.
 * Node identifiers interpreted as integers or strings.
     * The canonical order of the nodes depends on the type of the identifiers.
     * Using string identifiers requires more memory.
