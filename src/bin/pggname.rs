@@ -24,7 +24,15 @@ fn main() -> Result<(), String> {
             let graph = read_gbz(input_file, config.benchmark)?;
             if config.node_ids == NodeIds::Integer || config.node_ids == NodeIds::Auto {
                 let graph = GBZInt { graph };
-                process(&graph, input_file, config.benchmark);
+                let hash = process(&graph, input_file, config.benchmark);
+                if config.store_name && let Some(hash) = hash {
+                    let mut graph = graph;
+                    let tags = graph.graph.tags_mut();
+                    // TODO: We should have a canonical source for the tag name.
+                    tags.insert("pggname", &hash);
+                    serialize::serialize_to(&graph.graph, input_file)
+                        .map_err(|e| format!("Error saving GBZ file {}: {}", input_file, e))?;
+                }
             } else {
                 let graph = GBZStr { graph };
                 process(&graph, input_file, config.benchmark);
@@ -71,6 +79,7 @@ enum NodeIds {
 struct Config {
     input_files: Vec<String>,
     node_ids: NodeIds,
+    store_name: bool,
     benchmark: bool,
 }
 
@@ -83,6 +92,7 @@ impl Config {
         let mut opts = Options::new();
         opts.optflag("i", "integer-ids", "use integer node identifiers");
         opts.optflag("s", "string-ids", "use string node identifiers");
+        opts.optflag("n", "store-name", "store the name in GBZ tags (not with -s, -b)");
         opts.optflag("b", "benchmark", "run benchmarks");
         let matches = opts.parse(&args[1..]).map_err(|e| e.to_string())?;
 
@@ -99,9 +109,10 @@ impl Config {
         } else {
             NodeIds::Auto
         };
+        let store_name = matches.opt_present("n");
         let benchmark = matches.opt_present("b");
 
-        Ok(Config { input_files, node_ids, benchmark })
+        Ok(Config { input_files, node_ids, store_name, benchmark })
     }
 }
 
@@ -182,13 +193,15 @@ fn read_gbz(input_file: &str, benchmark: bool) -> Result<GBZ, String> {
 
 //-----------------------------------------------------------------------------
 
-fn process<G: Graph>(graph: &G, input_file: &str, benchmark: bool) {
+fn process<G: Graph>(graph: &G, input_file: &str, benchmark: bool) -> Option<String> {
     if benchmark {
         print_statistics(graph, input_file);
         benchmark_all::<G>(graph);
+        None
     } else {
         let hash = hash::<Sha256, G>(graph);
         println!("{}  {}", hash, input_file);
+        Some(hash)
     }
 }
 
