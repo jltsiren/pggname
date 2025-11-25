@@ -2,7 +2,8 @@ use gbwt::GBZ;
 
 use getopts::Options;
 
-use pggname::{Graph, GraphStr, GraphInt, GBZStr, GBZInt};
+use pggname::Graph;
+use pggname::graph::{GraphInt, GraphStr, GBZInt, GBZStr};
 
 use sha2::{Digest, Sha224, Sha256, Sha384, Sha512_224, Sha512_256, Sha512};
 use sha2::digest;
@@ -10,7 +11,7 @@ use sha2::digest;
 use simple_sds::serialize;
 
 use std::fs::OpenOptions;
-use std::io::{BufRead, BufReader};
+use std::io::BufReader;
 use std::time::Instant;
 use std::{env, process};
 
@@ -136,34 +137,7 @@ fn read_gfa<G: Graph>(input_file: &str, benchmark: bool) -> Result<G, String> {
         .map_err(|e| format!("Error opening GFA file {}: {}", input_file, e))?;
     let reader = BufReader::new(gfa_file);
 
-    // Read and validate the graph.
-    let mut graph = G::new();
-    for (i, line) in reader.split(b'\n').enumerate() {
-        let line = line.map_err(|e| format!("Error reading GFA line {}: {}", i + 1, e))?;
-        if line.is_empty() {
-            continue;
-        }
-        if line[0] == b'S' {
-            let fields: Vec<&[u8]> = line.split(|&c| c == b'\t').collect();
-            if fields.len() < 3 {
-                return Err(format!("Error parsing GFA line {}: not enough fields for a segment", i + 1));
-            }
-            graph.add_node(fields[1], fields[2])?;
-        } else if line[0] == b'L' {
-            let fields: Vec<&[u8]> = line.split(|&c| c == b'\t').collect();
-            if fields.len() < 5 {
-                return Err(format!("Error parsing GFA line {}: not enough fields for a link", i + 1));
-            }
-            let source_name = fields[1];
-            let source_o = pggname::parse_orientation(fields[2])
-                .map_err(|e| format!("Error parsing GFA line {}: {}", i + 1, e))?;
-            let dest_name = fields[3];
-            let dest_o = pggname::parse_orientation(fields[4])
-                .map_err(|e| format!("Error parsing GFA line {}: {}", i + 1, e))?;
-            graph.add_edge(source_name, source_o, dest_name, dest_o)?;
-        }
-    }
-    graph.finalize()?;
+    let graph = pggname::parse_gfa::<G, _>(reader)?;
 
     let duration = start_time.elapsed();
     let seconds = duration.as_secs_f64();
@@ -199,26 +173,16 @@ fn process<G: Graph>(graph: &G, input_file: &str, benchmark: bool) -> Option<Str
         benchmark_all::<G>(graph);
         None
     } else {
-        let hash = hash::<Sha256, G>(graph);
+        let hash = pggname::hash::<Sha256, G>(graph);
         println!("{}  {}", hash, input_file);
         Some(hash)
     }
 }
 
-fn hash<D: Digest, G: Graph>(graph: &G) -> String
-    where digest::Output<D>: core::fmt::LowerHex {
-    let mut hasher = D::new();
-    for bytes in graph.node_iter() {
-        hasher.update(&bytes);
-    }
-    let hash = hasher.finalize();
-    format!("{:x}", hash)
-}
-
 fn benchmark<D: Digest, G: Graph>(graph: &G, name: &str) 
     where digest::Output<D>: core::fmt::LowerHex {
     let start = Instant::now();
-    let hash = hash::<D, G>(graph);
+    let hash = pggname::hash::<D, G>(graph);
     let duration = start.elapsed();
     let seconds = duration.as_secs_f64();
     eprintln!("{}: {}", name, hash);
