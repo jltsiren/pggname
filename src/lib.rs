@@ -8,26 +8,10 @@
 //! The purpose of pggname is to identify only the graph itself.
 //! Hence the canonical GFA representation does not include other information, such as headers, haplotype paths, or metadata.
 
+pub mod algorithms;
 pub mod graph;
 
+pub use algorithms::{hash, parse_gfa};
 pub use graph::Graph;
-pub use graph::parse_gfa;
-
-use sha2::Digest;
-use sha2::digest;
-
-//-----------------------------------------------------------------------------
-
-// TODO: Should this be here? Maybe pub mod algorithms?
-/// Computes the given hash of the canonical GFA representation of the given graph.
-pub fn hash<D: Digest, G: Graph>(graph: &G) -> String
-    where digest::Output<D>: core::fmt::LowerHex {
-    let mut hasher = D::new();
-    for bytes in graph.node_iter() {
-        hasher.update(&bytes);
-    }
-    let hash = hasher.finalize();
-    format!("{:x}", hash)
-}
 
 //-----------------------------------------------------------------------------
