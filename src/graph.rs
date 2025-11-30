@@ -22,6 +22,8 @@ use gbwt::support;
 
 use std::collections::BTreeMap;
 
+// FIXME: tests (also algorithms::parse_gfa, algorithms::hash)
+
 //-----------------------------------------------------------------------------
 
 /// A bidirected sequence graph.
