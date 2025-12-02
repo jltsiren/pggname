@@ -4,7 +4,7 @@
 
 use gbwt::support::Tags;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 //-----------------------------------------------------------------------------
 
@@ -15,10 +15,6 @@ pub struct GraphName {
     subgraph: BTreeMap<String, BTreeSet<String>>,
     translation: BTreeMap<String, BTreeSet<String>>,
 }
-
-// FIXME: implement
-// * is subgraph of / translates to
-// * describe relationship
 
 impl GraphName {
     /// Name of the tag storing the graph name.
@@ -217,9 +213,30 @@ impl GraphName {
         }
     }
 
+    /// Adds all relationships from another `GraphName` object.
+    pub fn add_relationships(&mut self, other: &GraphName) {
+        for (supergraph, subgraphs) in &other.subgraph {
+            let entry = self.subgraph.entry(supergraph.clone()).or_default();
+            for subgraph in subgraphs {
+                entry.insert(subgraph.clone());
+            }
+        }
+        for (from, tos) in &other.translation {
+            let entry = self.translation.entry(from.clone()).or_default();
+            for to in tos {
+                entry.insert(to.clone());
+            }
+        }
+    }
+
     /// Returns the name of the graph, if available.
     pub fn name(&self) -> Option<&String> {
         self.name.as_ref()
+    }
+
+    /// Returns `true` if the graph has a name.
+    pub fn has_name(&self) -> bool {
+        self.name.is_some()
     }
 
     /// Returns `true` if both objects represent the same graph.
@@ -248,7 +265,45 @@ impl GraphName {
         })
     }
 
-    // FIXME: write_tags
+    fn relationships_to_string(relationships: &BTreeMap<String, BTreeSet<String>>) -> String {
+        let mut value = String::new();
+        for (from, tos) in relationships {
+            for to in tos {
+                if !value.is_empty() {
+                    value.push(Self::TAG_RELATIONSHIP_LIST_SEPARATOR);
+                }
+                value.push_str(&from);
+                value.push(Self::TAG_GFA_RELATIONSHIP_SEPARATOR);
+                value.push_str(&to);
+            }
+        }
+        value
+    }
+
+    /// Writes the data stored in this object to the given tags.
+    ///
+    /// Clears existing tags if no corresponding data is available.
+    pub fn write_tags(&self, tags: &mut Tags) {
+        if let Some(name) = &self.name {
+            tags.insert(Self::TAG_NAME, name);
+        } else {
+            tags.remove(Self::TAG_NAME);
+        }
+
+        if !self.subgraph.is_empty() {
+            let value = Self::relationships_to_string(&self.subgraph);
+            tags.insert(Self::TAG_SUBGRAPH, &value);
+        } else {
+            tags.remove(Self::TAG_SUBGRAPH);
+        }
+
+        if !self.translation.is_empty() {
+            let value = Self::relationships_to_string(&self.translation);
+            tags.insert(Self::TAG_TRANSLATION, &value);
+        } else {
+            tags.remove(Self::TAG_TRANSLATION);
+        }
+    }
 
     /// Returns GFA header lines representing this object.
     pub fn to_gfa_header_lines(&self) -> Vec<String> {
@@ -286,6 +341,191 @@ impl GraphName {
             }
         }
         lines
+    }
+
+    // Finds a path of subgraph relationships from `from` to `to`, including both.
+    // Uses relationships stored in `self`.
+    fn find_subgraph_path(&self, from: &GraphName, to: &GraphName) -> Option<Vec<String>> {
+        if !from.has_name() || !to.has_name() {
+            return None;
+        }
+        let from_name = from.name().unwrap();
+        let to_name = to.name().unwrap();
+
+        // Find a shortest path using BFS.
+        let mut predecessor: BTreeMap<String, String> = BTreeMap::new();
+        predecessor.insert(from_name.clone(), String::new());
+        let mut queue: VecDeque<String> = VecDeque::new();
+        queue.push_back(from_name.clone());
+        while let Some(curr) = queue.pop_front() {
+            if curr == *to_name {
+                break;
+            }
+            if let Some(supers) = self.subgraph.get(&curr) {
+                for supergraph in supers {
+                    if !predecessor.contains_key(supergraph) {
+                        predecessor.insert(supergraph.clone(), curr.clone());
+                        queue.push_back(supergraph.clone());
+                    }
+                }
+            }
+        }
+        if !predecessor.contains_key(to_name) {
+            return None;
+        }
+
+        // Trace back the path.
+        let mut result: Vec<String> = Vec::new();
+        let mut current = to_name.clone();
+        while !current.is_empty() {
+            result.push(current.clone());
+            current = predecessor.get(&current).unwrap().clone();
+        }
+        result.reverse();
+
+        Some(result)
+    }
+
+    // Finds a path of subgraph or translation relationships from `from` to `to`, including both.
+    // Each step is a pair `(name, is_translation)`, where `is_translation` indicates whether the step to the next name is a translation.
+    // Uses relationships stored in `self`.
+    fn find_path(&self, from: &GraphName, to: &GraphName) -> Option<Vec<(String, bool)>> {
+        if !from.has_name() || !to.has_name() {
+            return None;
+        }
+        let from_name = from.name().unwrap();
+        let to_name = to.name().unwrap();
+
+        // Find a shortest path using BFS.
+        let mut predecessor: BTreeMap<String, (String, bool)> = BTreeMap::new();
+        predecessor.insert(from_name.clone(), (String::new(), false));
+        let mut queue: VecDeque<String> = VecDeque::new();
+        queue.push_back(from_name.clone());
+        while let Some(curr) = queue.pop_front() {
+            if curr == *to_name {
+                break;
+            }
+            // Prioritize subgraph relationships.
+            if let Some(neighbors) = self.subgraph.get(&curr) {
+                for next in neighbors {
+                    if !predecessor.contains_key(next) {
+                        predecessor.insert(next.clone(), (curr.clone(), false));
+                        queue.push_back(next.clone());
+                    }
+                }
+            }
+            // Then consider translation relationships.
+            if let Some(neighbors) = self.translation.get(&curr) {
+                for next in neighbors {
+                    if !predecessor.contains_key(next) {
+                        predecessor.insert(next.clone(), (curr.clone(), true));
+                        queue.push_back(next.clone());
+                    }
+                }
+            }
+        }
+        if !predecessor.contains_key(to_name) {
+            return None;
+        }
+
+        // Trace back the path.
+        let mut result: Vec<(String, bool)> = Vec::new();
+        result.push((from_name.clone(), false));
+        let (mut curr, mut is_translation) = predecessor.get(to_name).unwrap().clone();
+        while !curr.is_empty() {
+            result.push((curr.clone(), is_translation));
+            (curr, is_translation) = predecessor.get(&curr).unwrap().clone();
+        }
+        result.reverse();
+
+        Some(result)
+    }
+
+    /// Returns `true` if this graph is a subgraph of the given graph.
+    ///
+    /// Uses relationships stored in both graphs.
+    pub fn is_subgraph_of(&self, other: &GraphName) -> bool {
+        let mut merged = self.clone();
+        merged.add_relationships(other);
+        merged.find_subgraph_path(self, other).is_some()
+    }
+
+    /// Returns `true` if coordinates in this graph can be translated to coordinates in the given graph.
+    ///
+    /// Uses relationships stored in both graphs.
+    pub fn translates_to(&self, other: &GraphName) -> bool {
+        let mut merged = self.clone();
+        merged.add_relationships(other);
+        merged.find_path(self, other).is_some()
+    }
+
+    fn append_description(result: &mut String, num: usize, description: &str) {
+        let line = format!("Name {} is for {}\n", num, description);
+        result.push_str(&line); 
+    }
+
+    fn append_relationship(result: &mut String, step: usize, is_translation: bool) {
+        let relation = if is_translation {
+            "translates to"
+        } else {
+            "is a subgraph of"
+        };
+        let line = format!("Graph {} {} graph {}\n", step, relation, step + 1);
+        result.push_str(&line);
+    }
+
+    fn append_graph(result: &mut String, num: usize, name: &str) {
+        let line = format!("{}\t{}\n", num, name);
+        result.push_str(&line);
+    }
+
+    /// Returns a description of the relationship between this graph and the given graph.
+    ///
+    /// Uses relationships stored in both graphs.
+    /// The description consists of multiple lines and ends with a newline.
+    ///
+    /// # Arguments
+    ///
+    /// * `other`: Name of the other graph.
+    /// * `self_desc`: Description of this graph to use in the output.
+    /// * `other_desc`: Description of the other graph to use in the output.
+    pub fn describe_relationship(&self, other: &GraphName, self_desc: &str, other_desc: &str) -> String {
+        let mut merged = self.clone();
+        merged.add_relationships(other);
+
+        let no_name = String::from("(no name)");
+        let mut from = (self.name.as_ref().unwrap_or(&no_name).clone(), String::from(self_desc));
+        let mut to = (other.name.as_ref().unwrap_or(&no_name).clone(), String::from(other_desc));
+        let mut path = merged.find_path(self, other);
+        if path.is_none() {
+            std::mem::swap(&mut from, &mut to);
+            path = merged.find_path(other, self);
+        }
+
+        // Graph descriptions and relationships.
+        let mut result = String::new();
+        Self::append_description(&mut result, 1, &from.1);
+        if let Some(path) = &path {
+            for i in 1..path.len() {
+                Self::append_relationship(&mut result, i, path[i - 1].1);
+            }
+            Self::append_description(&mut result, path.len(), &to.1);
+        } else {
+            Self::append_description(&mut result, 2, &to.1);
+        }
+
+        // Graph names.
+        result.push_str("With graph names:\n");
+        if let Some(path) = path {
+            for (i, (name, _)) in path.iter().enumerate() {
+                Self::append_graph(&mut result, i + 1, name);
+            }
+        } else {
+            Self::append_graph(&mut result, 1, &from.0);
+            Self::append_graph(&mut result, 2, &to.0);
+        }
+
+        result
     }
 }
 
