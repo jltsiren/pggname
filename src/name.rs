@@ -1,6 +1,16 @@
-//! A structure storing a graph name and relationships between graphs.
-
-// FIXME: document
+//! Structures for storing graph name and relationship information.
+//!
+//! A [`GraphName`] can store a stable graph name along with subgraph and translation relationships between graphs.
+//! This information can be imported from and exported to [`Tags`] objects as well as GFA and GAF header lines.
+//!
+//! Graph A is a subgraph of graph B, if all nodes and edges of A are also present in B.
+//! The node identifiers and sequence labels in graph A must match those in graph B.
+//! This usually means that anything using graph A as a reference can also use graph B.
+//!
+//! For coordinate translation from graph A to graph B, we use an intermediate graph C that is a subgraph of B.
+//! We require that graphs A and C are isomorphic (with matching node labels), if we break their nodes into 1 bp pieces.
+//! There is therefore a one-to-one mapping between unary paths in A and C.
+//! We can use this mapping to translate positions in graph A to graph C, and then use these positions in graph B.
 
 use gbwt::support::Tags;
 
@@ -8,7 +18,13 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 //-----------------------------------------------------------------------------
 
-// FIXME: document, example, tests
+// FIXME: example, tests
+/// A structure that stores a stable graph name along with subgraph and translation relationships between graphs.
+///
+/// Each object corresponds to a particular graph.
+/// The object may store the stable name of the graph, if available.
+/// It may contain the relationship between this graph and its parent graph, if the relationship and the parent's name are known.
+/// There may also be other relationships inherited from the parent graph.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct GraphName {
     name: Option<String>,
@@ -16,14 +32,15 @@ pub struct GraphName {
     translation: BTreeMap<String, BTreeSet<String>>,
 }
 
+/// Constants.
 impl GraphName {
-    /// Name of the tag storing the graph name.
+    /// Name of the [`Tags`] key storing the graph name.
     const TAG_NAME: &'static str = "pggname";
 
-    /// Name of the tag storing subgraph relationships.
+    /// Name of the [`Tags`] key storing subgraph relationships.
     const TAG_SUBGRAPH: &'static str = "subgraph";
 
-    /// Name of the tag storing translation relationships.
+    /// Name of the [`Tags`] key storing translation relationships.
     const TAG_TRANSLATION: &'static str = "translation";
 
     /// GFA header tag storing the graph name.
@@ -43,7 +60,12 @@ impl GraphName {
     const GFA_GAF_FIELD_SEPARATOR: char = '\t';
     const TAG_GFA_RELATIONSHIP_SEPARATOR: char = ',';
     const TAG_RELATIONSHIP_LIST_SEPARATOR: char = ';';
+}
 
+//-----------------------------------------------------------------------------
+
+/// Construction.
+impl GraphName {
     /// Creates a new `GraphName` with the given stable graph name.
     pub fn new(name: String) -> Self {
         GraphName {
@@ -228,43 +250,12 @@ impl GraphName {
             }
         }
     }
+}
 
-    /// Returns the name of the graph, if available.
-    pub fn name(&self) -> Option<&String> {
-        self.name.as_ref()
-    }
+//-----------------------------------------------------------------------------
 
-    /// Returns `true` if the graph has a name.
-    pub fn has_name(&self) -> bool {
-        self.name.is_some()
-    }
-
-    /// Returns `true` if both objects represent the same graph.
-    pub fn is_same(&self, other: &GraphName) -> bool {
-        match (&self.name, &other.name) {
-            (Some(name1), Some(name2)) => name1 == name2,
-            _ => false,
-        }
-    }
-
-    /// Returns an iterator over stored subgraph relationships.
-    ///
-    /// The iterator yields pairs `(subgraph_name, supergraph_name)` in sorted order.
-    pub fn subgraph_iter(&self) -> impl Iterator<Item = (&String, &String)> {
-        self.subgraph.iter().flat_map(|(supergraph, subgraphs)| {
-            subgraphs.iter().map(move |subgraph| (subgraph, supergraph))
-        })
-    }
-
-    /// Returns an iterator over stored translation relationships.
-    ///
-    /// The iterator yields pairs `(from_name, to_name)` in sorted order.
-    pub fn translation_iter(&self) -> impl Iterator<Item = (&String, &String)> {
-        self.translation.iter().flat_map(|(from, tos)| {
-            tos.iter().map(move |to| (from, to))
-        })
-    }
-
+/// Export to other formats.
+impl GraphName {
     fn relationships_to_string(relationships: &BTreeMap<String, BTreeSet<String>>) -> String {
         let mut value = String::new();
         for (from, tos) in relationships {
@@ -341,6 +332,45 @@ impl GraphName {
             }
         }
         lines
+    }
+}
+
+/// Queries and operations.
+impl GraphName {
+    /// Returns the name of the graph, if available.
+    pub fn name(&self) -> Option<&String> {
+        self.name.as_ref()
+    }
+
+    /// Returns `true` if the graph has a name.
+    pub fn has_name(&self) -> bool {
+        self.name.is_some()
+    }
+
+    /// Returns `true` if both objects represent the same graph.
+    pub fn is_same(&self, other: &GraphName) -> bool {
+        match (&self.name, &other.name) {
+            (Some(name1), Some(name2)) => name1 == name2,
+            _ => false,
+        }
+    }
+
+    /// Returns an iterator over stored subgraph relationships.
+    ///
+    /// The iterator yields pairs `(subgraph_name, supergraph_name)` in sorted order.
+    pub fn subgraph_iter(&self) -> impl Iterator<Item = (&String, &String)> {
+        self.subgraph.iter().flat_map(|(supergraph, subgraphs)| {
+            subgraphs.iter().map(move |subgraph| (subgraph, supergraph))
+        })
+    }
+
+    /// Returns an iterator over stored translation relationships.
+    ///
+    /// The iterator yields pairs `(from_name, to_name)` in sorted order.
+    pub fn translation_iter(&self) -> impl Iterator<Item = (&String, &String)> {
+        self.translation.iter().flat_map(|(from, tos)| {
+            tos.iter().map(move |to| (from, to))
+        })
     }
 
     // Finds a path of subgraph relationships from `from` to `to`, including both.
