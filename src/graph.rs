@@ -8,8 +8,8 @@
 //! Forward edges are adjacent to the right side of the node, while reverse edges are adjacent to the left side.
 //! Edges are ordered by source orientation, destination node, and destination orientation.
 //! The edges are bidirectional.
-//! Their canonical orientation is from the lexicographically smaller node to the larger node.
-//! A self-loop is canonical, if at least one node in in forward orientation.
+//! Their canonical orientation is from the smaller node to the larger node, according to the sorting order.
+//! A self-loop is canonical, if at least one node is in the forward orientation.
 //!
 //! The name of a graph is the SHA-256 of its canonical GFA representation.
 //! The nodes are ordered by their names.

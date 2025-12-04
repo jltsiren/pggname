@@ -1,6 +1,6 @@
 # Stable names for pangenome graphs
 
-This is a prototype for generating stable names for pangenome graphs.
+This is a proposal for generating stable names for pangenome graphs.
 The names are SHA-256 hashes of a canonical GFA representation of the graph.
 
 See [refget](https://ga4gh.github.io/refget/) for a similar naming scheme for sequences.

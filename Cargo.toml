@@ -1,9 +1,8 @@
 [package]
 name = "pggname"
 version = "0.1.0"
-authors = ["Jouni Siren <jouni.siren@iki.fi>"]
 edition = "2024"
-description = "Pangenome graph naming based on hashing in a canonical order."
+description = "Pangenome graph naming based on hashing in a canonical order"
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/jltsiren/pggname"
