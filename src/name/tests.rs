@@ -190,6 +190,18 @@ fn graph_name_manual() {
     let from_parents = from_parents();
     assert!(manual.is_same(&from_parents), "GraphName built manually does not match GraphName built from parents");
     assert_eq!(manual, from_parents, "GraphName built manually is not equal to GraphName built from parents");
+
+    let subgraph: Vec<(&str, &str)> = manual.subgraph_iter().collect();
+    assert_eq!(subgraph.len(), SUBGRAPH.len(), "Wrong number of subgraph relationships from iterator");
+    for (i, pair) in subgraph.iter().enumerate() {
+        assert_eq!(*pair, SUBGRAPH[i], "Wrong subgraph relationship {} from iterator", i);
+    }
+
+    let translation: Vec<(&str, &str)> = manual.translation_iter().collect();
+    assert_eq!(translation.len(), TRANSLATION.len(), "Wrong number of translation relationships from iterator");
+    for (i, pair) in translation.iter().enumerate() {
+        assert_eq!(*pair, TRANSLATION[i], "Wrong translation relationship {} from iterator", i);
+    }
 }
 
 #[test]

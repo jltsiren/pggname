@@ -403,18 +403,18 @@ impl GraphName {
     /// Returns an iterator over stored subgraph relationships.
     ///
     /// The iterator yields pairs `(subgraph_name, supergraph_name)` in sorted order.
-    pub fn subgraph_iter(&self) -> impl Iterator<Item = (&String, &String)> {
-        self.subgraph.iter().flat_map(|(supergraph, subgraphs)| {
-            subgraphs.iter().map(move |subgraph| (subgraph, supergraph))
+    pub fn subgraph_iter(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.subgraph.iter().flat_map(|(subgraph, supergraphs)| {
+            supergraphs.iter().map(move |supergraph| (subgraph.as_ref(), supergraph.as_ref()))
         })
     }
 
     /// Returns an iterator over stored translation relationships.
     ///
     /// The iterator yields pairs `(from_name, to_name)` in sorted order.
-    pub fn translation_iter(&self) -> impl Iterator<Item = (&String, &String)> {
+    pub fn translation_iter(&self) -> impl Iterator<Item = (&str, &str)> {
         self.translation.iter().flat_map(|(from, tos)| {
-            tos.iter().map(move |to| (from, to))
+            tos.iter().map(move |to| (from.as_ref(), to.as_ref()))
         })
     }
 
