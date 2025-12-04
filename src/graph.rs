@@ -22,6 +22,9 @@ use gbwt::support;
 
 use std::collections::BTreeMap;
 
+#[cfg(test)]
+mod tests;
+
 //-----------------------------------------------------------------------------
 
 /// A bidirected sequence graph.
