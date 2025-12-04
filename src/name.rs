@@ -16,15 +16,34 @@ use gbwt::support::Tags;
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
+#[cfg(test)]
+mod tests;
+
 //-----------------------------------------------------------------------------
 
-// FIXME: example, tests
-/// A structure that stores a stable graph name along with subgraph and translation relationships between graphs.
+/// A structure that stores a graph name along with subgraph and translation relationships between graphs.
 ///
 /// Each object corresponds to a particular graph.
 /// The object may store the stable name of the graph, if available.
 /// It may contain the relationship between this graph and its parent graph, if the relationship and the parent's name are known.
 /// There may also be other relationships inherited from the parent graph.
+///
+/// # Examples
+///
+/// ```
+/// use pggname::GraphName;
+///
+/// let parent = GraphName::new(String::from("parent"));
+/// let mut translated = GraphName::new(String::from("translated"));
+/// translated.add_translation_to(&parent);
+/// let mut subgraph = GraphName::new(String::from("subgraph"));
+/// subgraph.make_subgraph_of(&translated);
+///
+/// assert!(subgraph.is_subgraph_of(&translated));
+/// assert!(!subgraph.is_subgraph_of(&parent));
+/// assert!(translated.translates_to(&parent));
+/// assert!(subgraph.translates_to(&parent));
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct GraphName {
     name: Option<String>,
@@ -215,24 +234,50 @@ impl GraphName {
         Ok(result)
     }
 
-    /// Adds a new subgraph relationship, if both names are available.
-    pub fn add_subgraph(&mut self, subgraph: &GraphName, supergraph: &GraphName) {
-        if let (Some(subgraph_name), Some(supergraph_name)) = (subgraph.name(), supergraph.name()) {
+    /// Adds a new subgraph relationship, if both names are non-empty.
+    pub fn add_subgraph(&mut self, subgraph: &str, supergraph: &str) {
+        if !subgraph.is_empty() && !supergraph.is_empty() {
             self.subgraph
-                .entry(supergraph_name.clone())
+                .entry(String::from(subgraph))
                 .or_default()
-                .insert(subgraph_name.clone());
+                .insert(String::from(supergraph));
         }
     }
 
-    /// Adds a new translation relationship, if both names are available.
-    pub fn add_translation(&mut self, from: &GraphName, to: &GraphName) {
-        if let (Some(from_name), Some(to_name)) = (from.name(), to.name()) {
-            self.translation
-                .entry(from_name.clone())
-                .or_default()
-                .insert(to_name.clone());
+    /// Adds a new subgraph relationship between this graph and the parent graph.
+    ///
+    /// Also copies all relationships from the parent graph.
+    /// Does nothing if either name is not available.
+    pub fn make_subgraph_of(&mut self, parent: &GraphName) {
+        if !self.has_name() || !parent.has_name() {
+            return;
         }
+        let entry = self.subgraph.entry(self.name.as_ref().unwrap().clone()).or_default();
+        entry.insert(parent.name.as_ref().unwrap().clone());
+        self.add_relationships(parent);
+    }
+
+    /// Adds a new translation relationship, if both names are non-empty.
+    pub fn add_translation(&mut self, from: &str, to: &str) {
+        if !from.is_empty() && !to.is_empty() {
+            self.translation
+                .entry(String::from(from))
+                .or_default()
+                .insert(String::from(to));
+        }
+    }
+
+    /// Adds a new translation relationship between this graph and the parent graph.
+    ///
+    /// Also copies all relationships from the parent graph.
+    /// Does nothing if either name is not available.
+    pub fn add_translation_to(&mut self, parent: &GraphName) {
+        if !self.has_name() || !parent.has_name() {
+            return;
+        }
+        let entry = self.translation.entry(self.name.as_ref().unwrap().clone()).or_default();
+        entry.insert(parent.name.as_ref().unwrap().clone());
+        self.add_relationships(parent);
     }
 
     /// Adds all relationships from another `GraphName` object.
@@ -274,7 +319,7 @@ impl GraphName {
     /// Writes the data stored in this object to the given tags.
     ///
     /// Clears existing tags if no corresponding data is available.
-    pub fn write_tags(&self, tags: &mut Tags) {
+    pub fn set_tags(&self, tags: &mut Tags) {
         if let Some(name) = &self.name {
             tags.insert(Self::TAG_NAME, name);
         } else {

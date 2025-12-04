@@ -136,8 +136,8 @@ mod tests {
         hash_gbz_str: &'static str,
     }
 
-    fn get_test_cases() -> Vec<TestCase> {
-        vec![
+    const TEST_CASES: &[TestCase] = {
+        &[
             TestCase {
                 gfa_name: "example.gfa",
                 gbz_name: "example.gbz",
@@ -155,22 +155,25 @@ mod tests {
                 hash_gbz_str: "e55ba1e7aad84b6735b4ca4ca46d7d1986a02864174aa66fe75b363e7e2d31d6",
             }
         ]
-    }
+    };
 
     #[test]
     fn test_gfa() {
-        let test_cases = get_test_cases();
-        for test_case in test_cases.iter() {
+        for test_case in TEST_CASES.iter() {
             let filename = support::get_test_data(&test_case.gfa_name);
+            let file = OpenOptions::new()
+                .read(true)
+                .open(&filename)
+                .unwrap();
+            let reader = BufReader::new(file);
+            let graph_int = parse_gfa::<GraphInt, _>(reader);
             if !test_case.hash_gfa_int.is_empty() {
-                let file = OpenOptions::new()
-                    .read(true)
-                    .open(&filename)
-                    .unwrap();
-                let reader = BufReader::new(file);
-                let graph_int: GraphInt = parse_gfa(reader).unwrap();
+                assert!(graph_int.is_ok(), "Failed to parse GraphInt {}", test_case.gfa_name);
+                let graph_int = graph_int.unwrap();
                 let hash_int = hash::<Sha256, _>(&graph_int);
                 assert_eq!(&hash_int, test_case.hash_gfa_int, "Wrong hash for GraphInt {}", test_case.gfa_name);
+            } else {
+                assert!(graph_int.is_err(), "GraphInt parsing should have failed for {}", test_case.gfa_name);
             }
 
             let file = OpenOptions::new()
@@ -186,8 +189,7 @@ mod tests {
 
     #[test]
     fn test_gbz() {
-        let test_cases = get_test_cases();
-        for test_case in test_cases.iter() {
+        for test_case in TEST_CASES.iter() {
             let filename = support::get_test_data(&test_case.gbz_name);
             let gbz: GBZ = serialize::load_from(&filename).unwrap();
 
