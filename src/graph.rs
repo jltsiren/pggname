@@ -22,7 +22,8 @@ use gbwt::support;
 
 use std::collections::BTreeMap;
 
-// FIXME: tests
+#[cfg(test)]
+mod tests;
 
 //-----------------------------------------------------------------------------
 

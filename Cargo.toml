@@ -13,6 +13,10 @@ getopts = { version = "0.2" }
 sha2 = { version = "0.10" }
 gbwt = { git = "https://github.com/jltsiren/gbwt-rs", branch = "main" }
 simple-sds = { git = "https://github.com/jltsiren/simple-sds", branch = "main" }
+rand = { version = "0.9", optional = true }
+
+[dev-dependencies]
+rand = "0.9"
 
 [[bin]]
 name = "pggname"
