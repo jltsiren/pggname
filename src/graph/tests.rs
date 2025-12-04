@@ -2,6 +2,7 @@ use super::*;
 
 use gbwt::support;
 use rand::Rng;
+use simple_sds::serialize;
 
 use std::collections::BTreeSet;
 
@@ -362,9 +363,95 @@ fn graph_str_edges_first() {
 
 //-----------------------------------------------------------------------------
 
-// FIXME: tests
-// existing graphs using GBZInt and GBZStr
-// statistics
-// iterator vs. alternate canonical GFA implementation
+fn gbz_statistics(gbz: &GBZ) -> (usize, usize, usize) {
+    let node_count = gbz.nodes();
+    let mut edge_count = 0;
+    let mut seq_len = 0;
+
+    for from_id in gbz.node_iter() {
+        for from_o in [Orientation::Forward, Orientation::Reverse] {
+            for (to_id, to_o) in gbz.successors(from_id, from_o).unwrap() {
+                if support::edge_is_canonical((from_id, from_o), (to_id, to_o)) {
+                    edge_count += 1;
+                }
+            }
+        }
+        seq_len += gbz.sequence_len(from_id).unwrap();
+    }
+
+    (node_count, edge_count, seq_len)
+}
+
+#[test]
+fn gbz_int() {
+    let filename = support::get_test_data("translation.gbz");
+    let gbz: GBZ = serialize::load_from(&filename).unwrap();
+    let (true_node_count, true_edge_count, true_seq_len) = gbz_statistics(&gbz);
+
+    let graph = GBZInt { graph: gbz.clone() };
+    let (node_count, edge_count, seq_len) = graph.statistics();
+    assert_eq!(node_count, true_node_count, "Wrong node count in GBZInt");
+    assert_eq!(edge_count, true_edge_count, "Wrong edge count in GBZInt");
+    assert_eq!(seq_len, true_seq_len, "Wrong sequence length in GBZInt");
+
+    let serialized: Vec<Vec<u8>> = graph.node_iter().collect();
+    assert_eq!(serialized.len(), true_node_count, "Wrong number of serialized nodes in GBZInt");
+
+    for (i, from_id) in gbz.node_iter().enumerate() {
+        let sequence = String::from_utf8_lossy(&gbz.sequence(from_id).unwrap());
+        let mut gfa = create_gfa_int(from_id, &sequence);
+        for from_o in [Orientation::Forward, Orientation::Reverse] {
+            for (to_id, to_o) in gbz.successors(from_id, from_o).unwrap() {
+                if support::edge_is_canonical((from_id, from_o), (to_id, to_o)) {
+                    let edge_gfa = gfa_edge_int(from_id, from_o, to_id, to_o);
+                    gfa.push_str(&edge_gfa);
+                }
+            }
+        }
+        let serialized_gfa = String::from_utf8_lossy(&serialized[i]);
+        assert_eq!(serialized_gfa, gfa, "Wrong serialization of node {} in GBZInt", from_id);
+    }
+}
+
+#[test]
+fn gbz_str() {
+    let filename = support::get_test_data("translation.gbz");
+    let gbz: GBZ = serialize::load_from(&filename).unwrap();
+    let (true_node_count, true_edge_count, true_seq_len) = gbz_statistics(&gbz);
+
+    let graph = GBZStr { graph: gbz.clone() };
+    let (node_count, edge_count, seq_len) = graph.statistics();
+    assert_eq!(node_count, true_node_count, "Wrong node count in GBZStr");
+    assert_eq!(edge_count, true_edge_count, "Wrong edge count in GBZStr");
+    assert_eq!(seq_len, true_seq_len, "Wrong sequence length in GBZStr");
+
+    let serialized: Vec<Vec<u8>> = graph.node_iter().collect();
+    assert_eq!(serialized.len(), true_node_count, "Wrong number of serialized nodes in GBZStr");
+
+    let mut nodes_in_order: Vec<(String, usize)> = gbz.node_iter()
+        .map(|id| (id.to_string(), id))
+        .collect();
+    nodes_in_order.sort();
+    for (i, (node_id, from_id)) in nodes_in_order.iter().enumerate() {
+        let sequence = String::from_utf8_lossy(&gbz.sequence(*from_id).unwrap());
+        let mut gfa = create_gfa_str(node_id, &sequence);
+        let mut edges_in_order: Vec<(Orientation, String, Orientation)> = Vec::new();
+        for from_o in [Orientation::Forward, Orientation::Reverse] {
+            for (to_id, to_o) in gbz.successors(*from_id, from_o).unwrap() {
+                let to_id_str = to_id.to_string();
+                if edge_is_canonical_str(node_id, from_o, &to_id_str, to_o) {
+                    edges_in_order.push((from_o, to_id_str, to_o));
+                }
+            }
+        }
+        edges_in_order.sort();
+        for (from_o, to_id, to_o) in edges_in_order.iter() {
+            let edge_gfa = gfa_edge_str(node_id, *from_o, to_id, *to_o);
+            gfa.push_str(&edge_gfa);
+        }
+        let serialized_gfa = String::from_utf8_lossy(&serialized[i]);
+        assert_eq!(serialized_gfa, gfa, "Wrong serialization of node {} in GBZStr", node_id);
+    }
+}
 
 //-----------------------------------------------------------------------------
