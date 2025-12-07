@@ -4,6 +4,7 @@ use getopts::Options;
 
 use pggname::Graph;
 use pggname::graph::{GraphInt, GraphStr, GBZInt, GBZStr};
+use pggname::algorithms;
 
 use sha2::{Digest, Sha224, Sha256, Sha384, Sha512_224, Sha512_256, Sha512};
 use sha2::digest;
@@ -137,7 +138,7 @@ fn read_gfa<G: Graph>(input_file: &str, benchmark: bool) -> Result<G, String> {
         .map_err(|e| format!("Error opening GFA file {}: {}", input_file, e))?;
     let reader = BufReader::new(gfa_file);
 
-    let graph = pggname::parse_gfa::<G, _>(reader)?;
+    let graph = algorithms::parse_gfa::<G, _>(reader)?;
 
     let duration = start_time.elapsed();
     let seconds = duration.as_secs_f64();
@@ -173,7 +174,7 @@ fn process<G: Graph>(graph: &G, input_file: &str, benchmark: bool) -> Option<Str
         benchmark_all::<G>(graph);
         None
     } else {
-        let hash = pggname::hash::<Sha256, G>(graph);
+        let hash = pggname::stable_name(graph);
         println!("{}  {}", hash, input_file);
         Some(hash)
     }
@@ -182,7 +183,7 @@ fn process<G: Graph>(graph: &G, input_file: &str, benchmark: bool) -> Option<Str
 fn benchmark<D: Digest, G: Graph>(graph: &G, name: &str) 
     where digest::Output<D>: core::fmt::LowerHex {
     let start = Instant::now();
-    let hash = pggname::hash::<D, G>(graph);
+    let hash = algorithms::hash::<D, G>(graph);
     let duration = start.elapsed();
     let seconds = duration.as_secs_f64();
     eprintln!("{}: {}", name, hash);

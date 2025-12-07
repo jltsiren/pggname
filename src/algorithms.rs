@@ -73,24 +73,6 @@ pub fn parse_gfa<G: Graph, R: BufRead>(reader: R) -> Result<G, String> {
 //-----------------------------------------------------------------------------
 
 /// Computes the given hash of the canonical GFA representation of the given graph.
-///
-/// # Examples
-///
-/// ```
-/// use pggname::Graph;
-/// use pggname::algorithms;
-/// use pggname::graph::GBZInt;
-/// use gbwt::GBZ;
-/// use gbwt::support;
-/// use sha2::Sha256;
-/// use simple_sds::serialize;
-///
-/// let filename = support::get_test_data("example.gbz");
-/// let gbz: GBZ = serialize::load_from(&filename).unwrap();
-/// let graph = GBZInt { graph: gbz };
-/// let hash = algorithms::hash::<Sha256, _>(&graph);
-/// assert_eq!(hash, "81b160c814182a12aaf95fd458e191590e95fb13c71e1c2f61ff827f605cf970");
-/// ```
 pub fn hash<D: Digest, G: Graph>(graph: &G) -> String
     where digest::Output<D>: core::fmt::LowerHex {
     let mut hasher = D::new();
@@ -99,6 +81,27 @@ pub fn hash<D: Digest, G: Graph>(graph: &G) -> String
     }
     let hash = hasher.finalize();
     format!("{:x}", hash)
+}
+
+/// Computes the stable name (pggname) of the given graph.
+///
+/// # Examples
+///
+/// ```
+/// use pggname::Graph;
+/// use pggname::graph::GBZInt;
+/// use gbwt::GBZ;
+/// use gbwt::support;
+/// use simple_sds::serialize;
+///
+/// let filename = support::get_test_data("example.gbz");
+/// let gbz: GBZ = serialize::load_from(&filename).unwrap();
+/// let graph = GBZInt { graph: gbz };
+/// let hash = pggname::stable_name(&graph);
+/// assert_eq!(hash, "81b160c814182a12aaf95fd458e191590e95fb13c71e1c2f61ff827f605cf970");
+/// ```
+pub fn stable_name<G: Graph>(graph: &G) -> String {
+    hash::<sha2::Sha256, G>(graph)
 }
 
 //-----------------------------------------------------------------------------
