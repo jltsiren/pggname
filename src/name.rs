@@ -12,6 +12,7 @@
 //! There is therefore a one-to-one mapping between unary paths in A and C.
 //! We can use this mapping to translate positions in graph A to graph C, and then use these positions in graph B.
 
+use gbwt::GBZ;
 use gbwt::support::Tags;
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -133,6 +134,13 @@ impl GraphName {
         }
 
         Ok(result)
+    }
+
+    /// Parses a `GraphName` from the tags in the given GBZ graph.
+    ///
+    /// Returns an empty object if the tags cannot be parsed.
+    pub fn from_gbz(gbz: &GBZ) -> Self {
+        Self::from_tags(gbz.tags()).unwrap_or_default()
     }
 
     fn typed_field_is_string(field: &str) -> Result<bool, String> {
