@@ -221,6 +221,7 @@ impl GraphName {
 
     /// Parses a `GraphName` from the given GFA/GAF header lines.
     ///
+    /// The lines must not end with a newline.
     /// Returns an error if the lines cannot be parsed.
     pub fn from_header_lines(lines: &[String]) -> Result<Self, String> {
         let mut result = GraphName::default();
@@ -316,9 +317,9 @@ impl GraphName {
                 if !value.is_empty() {
                     value.push(Self::TAG_RELATIONSHIP_LIST_SEPARATOR);
                 }
-                value.push_str(&from);
+                value.push_str(from);
                 value.push(Self::TAG_GFA_RELATIONSHIP_SEPARATOR);
-                value.push_str(&to);
+                value.push_str(to);
             }
         }
         value
@@ -350,6 +351,8 @@ impl GraphName {
     }
 
     /// Returns GFA header lines representing this object.
+    ///
+    /// The lines do not end with a newline.
     pub fn to_gfa_header_lines(&self) -> Vec<String> {
         let mut lines = Vec::new();
         if let Some(name) = &self.name {
@@ -369,6 +372,8 @@ impl GraphName {
     }
 
     /// Returns GAF header lines representing this object.
+    ///
+    /// The lines do not end with a newline.
     pub fn to_gaf_header_lines(&self) -> Vec<String> {
         let mut lines = Vec::new();
         if let Some(name) = &self.name {

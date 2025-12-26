@@ -51,8 +51,7 @@ fn main() -> Result<(), String> {
                 }
                 NodeIds::Auto => {
                     let graph = read_gfa::<GraphInt>(input_file, config.benchmark);
-                    if graph.is_ok() {
-                        let graph = graph.unwrap();
+                    if let Ok(graph) = graph {
                         process(&graph, input_file, config.benchmark);
                     } else {
                         let graph = read_gfa::<GraphStr>(input_file, config.benchmark)?;

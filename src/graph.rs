@@ -104,7 +104,7 @@ impl Graph for GraphInt {
             .map_err(|e| format!("Error parsing node name {}: {}", String::from_utf8_lossy(name), e))?;
         if let Some(node) = self.nodes.get_mut(&id) {
             if node.seen && sequence != node.sequence {
-                let msg = format!("Node {} already exists with a different sequence", String::from_utf8_lossy(&name));
+                let msg = format!("Node {} already exists with a different sequence", String::from_utf8_lossy(name));
                 return Err(msg);
             }
             // If the node already exists, update its sequence.
@@ -124,12 +124,8 @@ impl Graph for GraphInt {
         let dest_id = Self::parse_id(dest_name)?;
 
         // Ensure that the nodes exist.
-        if !self.nodes.contains_key(&source_id) {
-            self.nodes.insert(source_id, NodeInt::new(None));
-        }
-        if !self.nodes.contains_key(&dest_id) {
-            self.nodes.insert(dest_id, NodeInt::new(None));
-        }
+        self.nodes.entry(source_id).or_insert_with(|| NodeInt::new(None));
+        self.nodes.entry(dest_id).or_insert_with(|| NodeInt::new(None));
 
         if Self::edge_is_canonical(source_id, source_o, dest_id, dest_o) {
             let source_node = self.nodes.get_mut(&source_id).unwrap();
