@@ -1,4 +1,4 @@
-use gbwt::GBZ;
+use gbz::GBZ;
 
 use getopts::Options;
 

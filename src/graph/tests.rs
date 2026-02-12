@@ -1,6 +1,6 @@
 use super::*;
 
-use gbwt::support;
+use gbz::support;
 use rand::Rng;
 use simple_sds::serialize;
 

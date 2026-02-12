@@ -2,7 +2,7 @@
 
 use crate::Graph;
 
-use gbwt::Orientation;
+use gbz::Orientation;
 
 use sha2::Digest;
 use sha2::digest;
@@ -22,7 +22,7 @@ use std::io::BufRead;
 /// use pggname::Graph;
 /// use pggname::algorithms;
 /// use pggname::graph::GraphInt;
-/// use gbwt::support;
+/// use gbz::support;
 /// use std::fs::OpenOptions;
 /// use std::io::BufReader;
 ///
@@ -90,8 +90,8 @@ pub fn hash<D: Digest, G: Graph>(graph: &G) -> String
 /// ```
 /// use pggname::Graph;
 /// use pggname::graph::GBZInt;
-/// use gbwt::GBZ;
-/// use gbwt::support;
+/// use gbz::GBZ;
+/// use gbz::support;
 /// use simple_sds::serialize;
 ///
 /// let filename = support::get_test_data("example.gbz");
@@ -122,8 +122,8 @@ mod tests {
     use super::*;
     use crate::graph::{GBZInt, GBZStr, GraphInt, GraphStr};
 
-    use gbwt::GBZ;
-    use gbwt::support;
+    use gbz::GBZ;
+    use gbz::support;
     use sha2::Sha256;
     use simple_sds::serialize;
 

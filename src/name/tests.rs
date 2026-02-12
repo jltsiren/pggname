@@ -45,7 +45,7 @@ fn from_parents() -> GraphName {
 fn tags() -> (Tags, Tags) {
     let mut all_tags = Tags::new();
     let mut name_tags = Tags::new();
-    all_tags.insert(gbwt::SOURCE_KEY, gbwt::SOURCE_VALUE);
+    all_tags.insert(gbz::SOURCE_KEY, gbz::SOURCE_VALUE);
     all_tags.insert(GraphName::TAG_NAME, NAME);
     name_tags.insert(GraphName::TAG_NAME, NAME);
 

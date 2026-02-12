@@ -10,8 +10,8 @@ repository = "https://github.com/jltsiren/pggname"
 [dependencies]
 getopts = { version = "0.2" }
 sha2 = { version = "0.10" }
-gbwt = { git = "https://github.com/jltsiren/gbwt-rs", tag = "v0.4" }
-simple-sds = { version = "0.4.0" }
+gbz = { version = "0.5" }
+simple-sds = { version = "0.4" }
 rand = { version = "0.9", optional = true }
 
 [dev-dependencies]

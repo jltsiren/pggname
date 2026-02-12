@@ -17,8 +17,8 @@
 //! Edge lines do not include the overlap field, as pangenome graphs do not use it.
 //! Header, path, and walk lines are not included in the hash, and neither are optional fields.
 
-use gbwt::{GBZ, Orientation};
-use gbwt::support;
+use gbz::{GBZ, Orientation};
+use gbz::support;
 
 use std::collections::BTreeMap;
 

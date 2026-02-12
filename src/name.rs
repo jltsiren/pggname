@@ -12,8 +12,8 @@
 //! There is therefore a one-to-one mapping between unary paths in A and C.
 //! We can use this mapping to translate positions in graph A to graph C, and then use these positions in graph B.
 
-use gbwt::GBZ;
-use gbwt::support::Tags;
+use gbz::GBZ;
+use gbz::support::Tags;
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
