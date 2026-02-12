@@ -1,6 +1,6 @@
 [package]
 name = "pggname"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "Pangenome graph naming based on hashing in a canonical order"
 license = "MIT"
