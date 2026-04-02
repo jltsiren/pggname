@@ -1,5 +1,9 @@
 # Pggname releases
 
+## Current version
+
+* Uses `gbz` version 0.6.
+
 ## Pggname 0.2.0 (2026-02-12)
 
 * Support GBZ version 2 with Zstandard compressed sequences.
