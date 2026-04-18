@@ -1,8 +1,8 @@
 # Pggname releases
 
-## Current version
+## Pggname 0.2.1 (2026-04-17)
 
-* Uses `gbz` version 0.6.
+* Uses `simple_sds` version 0.4.1 and `gbz` version 0.6.1.
 
 ## Pggname 0.2.0 (2026-02-12)
 
@@ -14,10 +14,15 @@ Initial release of the stable graph name scheme. The reference implementation su
 
 ## Release process
 
+* Clean up with `cargo clean`.
+* Update version in `Cargo.toml`.
+* Switch to crates.io versions of dependencies, if necessary.
+* Update `RELEASES.md`.
 * Run `cargo clippy`.
 * Run tests with `cargo test`.
-* Update version in `Cargo.toml`.
-* Update `RELEASES.md`.
+* Build documentation with `cargo doc`.
+* Build the optimized version with `cargo build --release`.
+* Commit the final changes for the release.
 * Publish in crates.io with `cargo publish`.
 * Push to GitHub.
 * Draft a new release in GitHub.

@@ -1,6 +1,6 @@
 [package]
 name = "pggname"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 description = "Pangenome graph naming based on hashing in a canonical order"
 license = "MIT"
@@ -10,10 +10,10 @@ repository = "https://github.com/jltsiren/pggname"
 [dependencies]
 getopts = { version = "0.2" }
 sha2 = { version = "0.10" }
-#gbz = { version = "0.6" }
-gbz = { git = "https://github.com/jltsiren/gbwt-rs.git", branch = "main" }
-#simple-sds = { version = "0.4" }
-simple-sds = { git = "https://github.com/jltsiren/simple-sds.git", branch = "main" }
+gbz = { version = "0.6.1" }
+#gbz = { git = "https://github.com/jltsiren/gbwt-rs.git", branch = "main" }
+simple-sds = { version = "0.4.1" }
+#simple-sds = { git = "https://github.com/jltsiren/simple-sds.git", branch = "main" }
 rand = { version = "0.9", optional = true }
 
 [dev-dependencies]
