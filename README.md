@@ -120,3 +120,7 @@ And its stable name is:
     * Using string identifiers requires more memory.
     * String identifiers are faster with GFA graphs and slower with GBZ graphs.
 * All SHA-2 variants.
+
+## Notes
+
+* The included `.cargo/config.toml` sets the target CPU to `native`.

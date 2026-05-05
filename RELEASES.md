@@ -1,5 +1,9 @@
 # Pggname releases
 
+## Pggname 0.2.2 (2026-05-05)
+
+* Sets `target-cpu=native` by default.
+
 ## Pggname 0.2.1 (2026-04-17)
 
 * Uses `simple_sds` version 0.4.1 and `gbz` version 0.6.1.
