@@ -123,4 +123,5 @@ And its stable name is:
 
 ## Notes
 
+* The naming scheme is currently case sensitive due to inconsistent handling of lower case sequences between tools.
 * The included `.cargo/config.toml` sets the target CPU to `native`.
