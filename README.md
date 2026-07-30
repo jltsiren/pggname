@@ -75,6 +75,20 @@ For each node, in sorted order, output:
 
 The canonical GFA representation of the graph does not include any other information, such as header lines, paths, or walks.
 
+### Technicalities
+
+Each line is terminated by a single `\n`, and the fields in a line are separated by a single `\t`.
+There are no empty fields or empty lines.
+The content of each field must be as in valid GFA.
+
+### Nodes (GFA segments)
+
+The sequence label of each node must be stored explicitly.
+Sequences are case sensitive, as some graph implementations do not normalize them.
+Upper case sequences are strongly recommended.
+
+### Edges (GFA links)
+
 An edge is canonical, if the source id is smaller than the destination id.
 A self-loop is canonical, if at least one of the nodes is in forward orientation.
 
@@ -123,5 +137,4 @@ And its stable name is:
 
 ## Notes
 
-* The naming scheme is currently case sensitive due to inconsistent handling of lower case sequences between tools.
 * The included `.cargo/config.toml` sets the target CPU to `native`.
