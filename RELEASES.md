@@ -1,5 +1,11 @@
 # Pggname releases
 
+## Current version
+
+* Supports GBZ version 3 with Zstandard compressed BWT.
+* Uses the `gbz` implementation of `GraphName`.
+* `pggname --store-name` now writes the same GBZ version it read.
+
 ## Pggname 0.2.2 (2026-05-05)
 
 * Sets `target-cpu=native` by default.
@@ -10,7 +16,7 @@
 
 ## Pggname 0.2.0 (2026-02-12)
 
-* Support GBZ version 2 with Zstandard compressed sequences.
+* Supports GBZ version 2 with Zstandard compressed sequences.
 
 ## Pggname 0.1.0 (2025-12-26)
 

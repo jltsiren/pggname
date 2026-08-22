@@ -10,8 +10,6 @@
 
 pub mod algorithms;
 pub mod graph;
-pub mod name;
 
 pub use algorithms::stable_name;
 pub use graph::Graph;
-pub use name::GraphName;
