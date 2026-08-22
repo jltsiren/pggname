@@ -1,4 +1,4 @@
-use gbz::GBZ;
+use gbz::{GBZ, GraphName};
 
 use getopts::Options;
 
@@ -23,16 +23,16 @@ fn main() -> Result<(), String> {
 
     for input_file in config.input_files.iter() {
         if GBZ::is_gbz(input_file) {
-            let graph = read_gbz(input_file, config.benchmark)?;
+            let (graph, version) = read_gbz(input_file, config.benchmark)?;
             if config.node_ids == NodeIds::Integer || config.node_ids == NodeIds::Auto {
                 let graph = GBZInt { graph };
                 let hash = process(&graph, input_file, config.benchmark);
                 if config.store_name && let Some(hash) = hash {
                     let mut graph = graph;
                     let tags = graph.graph.tags_mut();
-                    // TODO: We should have a canonical source for the tag name.
-                    tags.insert("pggname", &hash);
-                    serialize::serialize_to(&graph.graph, input_file)
+                    let graph_name = GraphName::new(hash);
+                    graph_name.set_tags(tags);
+                    serialize::serialize_version_to(&graph.graph, input_file, version)
                         .map_err(|e| format!("Error saving GBZ file {}: {}", input_file, e))?;
                 }
             } else {
@@ -93,7 +93,7 @@ impl Config {
         let mut opts = Options::new();
         opts.optflag("i", "integer-ids", "use integer node identifiers");
         opts.optflag("s", "string-ids", "use string node identifiers");
-        opts.optflag("n", "store-name", "store the name in GBZ tags (not with -s, -b)");
+        opts.optflag("n", "store-name", "overwrite names and relationships in GBZ tags (not with -s, -b)");
         opts.optflag("b", "benchmark", "run benchmarks");
         let matches = opts.parse(&args[1..]).map_err(|e| e.to_string())?;
 
@@ -149,9 +149,12 @@ fn read_gfa<G: Graph>(input_file: &str, benchmark: bool) -> Result<G, String> {
     Ok(graph)
 }
 
-fn read_gbz(input_file: &str, benchmark: bool) -> Result<GBZ, String> {
+// Returns the graph itself and the version of the file format.
+fn read_gbz(input_file: &str, benchmark: bool) -> Result<(GBZ, usize), String> {
     let start_time = Instant::now();
 
+    let version = serialize::determine_version_from::<GBZ, _>(input_file)
+        .map_err(|e| format!("Error determining GBZ version from {}: {}", input_file, e))?;
     let graph: GBZ = serialize::load_from(input_file)
         .map_err(|e| format!("Error loading GBZ file {}: {}", input_file, e))?;
 
@@ -162,7 +165,7 @@ fn read_gbz(input_file: &str, benchmark: bool) -> Result<GBZ, String> {
         eprintln!();
     }
 
-    Ok(graph)
+    Ok((graph, version))
 }
 
 //-----------------------------------------------------------------------------
