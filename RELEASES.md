@@ -1,6 +1,6 @@
 # Pggname releases
 
-## Current version
+## Pggname 0.3.0 (2026-08-24)
 
 * Supports GBZ version 3 with Zstandard compressed BWT.
 * Uses the `gbz` implementation of `GraphName`.

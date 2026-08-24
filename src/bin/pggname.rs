@@ -88,7 +88,7 @@ impl Config {
     fn new() -> Result<Self, String> {
         let args: Vec<String> = env::args().collect();
         let program = args[0].clone();
-        let header = format!("Usage: {} [options] graph1 [graph2 ...]", &program);
+        let header = format!("Usage: {} [options] graph1 [graph2 ...]", program);
 
         let mut opts = Options::new();
         opts.optflag("i", "integer-ids", "use integer node identifiers");
