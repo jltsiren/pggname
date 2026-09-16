@@ -22,9 +22,11 @@
 //! apart.
 
 use crate::topology::Topology;
+use crate::unitigs::Unitigs;
 
 use coloring::{Classes, Coloring};
 use matching::{Matcher, Outcome};
+use translation::Translation;
 
 use gbz::Orientation;
 
@@ -32,6 +34,7 @@ use std::fmt;
 use std::io::{self, Write};
 
 pub mod hashing;
+pub mod translation;
 
 pub(crate) mod coloring;
 pub(crate) mod matching;
@@ -341,6 +344,150 @@ pub fn are_isomorphic_with_statistics<A: Topology, B: Topology>(
     }
 }
 
+//-----------------------------------------------------------------------------
+
+/// The result of a unitig-level isomorphism test.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum UnitigIsomorphism {
+    /// The graphs are equivalent, with the given verified translation.
+    Isomorphic(Translation),
+    /// The graphs are not equivalent, for the given reason.
+    ///
+    /// The reason refers to the compacted graphs, where each node is a maximal non-branching path.
+    NotIsomorphic(Mismatch),
+    /// The question could not be settled.
+    Unresolved,
+}
+
+impl UnitigIsomorphism {
+    /// Returns `true` if the graphs are equivalent.
+    pub fn is_isomorphic(&self) -> bool {
+        matches!(self, UnitigIsomorphism::Isomorphic(_))
+    }
+
+    /// Returns the translation, if the graphs are equivalent.
+    pub fn translation(&self) -> Option<&Translation> {
+        match self {
+            UnitigIsomorphism::Isomorphic(translation) => Some(translation),
+            _ => None,
+        }
+    }
+
+    /// Returns the translation, if the graphs are equivalent, consuming the result.
+    pub fn into_translation(self) -> Option<Translation> {
+        match self {
+            UnitigIsomorphism::Isomorphic(translation) => Some(translation),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for UnitigIsomorphism {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            UnitigIsomorphism::Isomorphic(_) => write!(f, "isomorphic"),
+            UnitigIsomorphism::NotIsomorphic(_) => write!(f, "not isomorphic"),
+            UnitigIsomorphism::Unresolved => write!(f, "unresolved"),
+        }
+    }
+}
+
+//-----------------------------------------------------------------------------
+
+/// Determines whether two graphs are isomorphic at the level of maximal non-branching paths.
+///
+/// Two graphs that represent the same pangenome may still differ as graphs, because one of them
+/// has chopped long nodes into shorter fragments. Collapsing each maximal non-branching path into
+/// a single node removes the difference. A positive answer is a [`Translation`], which maps
+/// intervals of nodes rather than whole nodes, because the two graphs cut the paths differently.
+///
+/// Returns an error if either graph has a connected component that is a cycle with no branches.
+/// See [`crate::unitigs`] for why those are not supported.
+///
+/// # Orientation
+///
+/// A unitig whose sequence equals its own reverse complement can be stored in either direction, and
+/// the two graphs may choose differently. The comparison of the compacted graphs therefore always
+/// allows flips, and the resulting translation is verified against `options`. When `allow_flips` is
+/// not set and such a unitig exists, the result may be [`UnitigIsomorphism::Unresolved`] even
+/// though the graphs are equivalent.
+///
+/// # Examples
+///
+/// ```
+/// use pggname::Topology;
+/// use pggname::isomorphism::{self, Options};
+/// use pggname::topology::IndexedGraph;
+/// use gbz::Orientation;
+///
+/// // One graph has a single node, the other has it chopped in two.
+/// let mut whole = IndexedGraph::new();
+/// whole.add_node(b"1", b"GATTACA");
+/// whole.finalize();
+///
+/// let mut chopped = IndexedGraph::new();
+/// let a = chopped.add_node(b"1", b"GATT");
+/// let b = chopped.add_node(b"2", b"ACA");
+/// chopped.add_edge(a, Orientation::Forward, b, Orientation::Forward);
+/// chopped.finalize();
+///
+/// // They are not isomorphic as graphs.
+/// let result = isomorphism::are_isomorphic(&whole, &chopped, &Options::default());
+/// assert!(!result.is_isomorphic());
+///
+/// // They are the same pangenome.
+/// let result = isomorphism::are_isomorphic_unitigs(&whole, &chopped, &Options::default()).unwrap();
+/// assert!(result.is_isomorphic());
+///
+/// // Node 1 of the first graph covers both nodes of the second.
+/// let translation = result.translation().unwrap();
+/// let parts = translation.parts(0);
+/// assert_eq!(parts.len(), 2);
+/// assert_eq!((parts[0].from, parts[0].node, parts[0].to, parts[0].len), (0, 0, 0, 4));
+/// assert_eq!((parts[1].from, parts[1].node, parts[1].to, parts[1].len), (4, 1, 0, 3));
+/// ```
+pub fn are_isomorphic_unitigs<A: Topology, B: Topology>(
+    first: &A, second: &B, options: &Options
+) -> Result<UnitigIsomorphism, String> {
+    are_isomorphic_unitigs_with_statistics(first, second, options).map(|(result, _)| result)
+}
+
+/// As [`are_isomorphic_unitigs`], but also returns statistics on the computation.
+pub fn are_isomorphic_unitigs_with_statistics<A: Topology, B: Topology>(
+    first: &A, second: &B, options: &Options
+) -> Result<(UnitigIsomorphism, Statistics), String> {
+    let first_unitigs = Unitigs::new(first)?;
+    let second_unitigs = Unitigs::new(second)?;
+
+    // The direction of a unitig whose sequence is its own reverse complement is arbitrary, so the
+    // compacted graphs must be compared with flips allowed. For every other unitig, the canonical
+    // direction rules a flip out anyway: a flip would require the sequence to equal the reverse
+    // complement of another canonical sequence, which forces both to be their own reverse
+    // complements.
+    let unitig_options = Options { allow_flips: true, ..*options };
+    let (result, statistics) = are_isomorphic_with_statistics(
+        first_unitigs.graph(), second_unitigs.graph(), &unitig_options
+    );
+
+    let result = match result {
+        Isomorphism::Isomorphic(mapping) => {
+            let translation = translation::expand(&first_unitigs, &second_unitigs, &mapping);
+            match translation::verify_translation(first, second, &translation, options) {
+                Ok(()) => UnitigIsomorphism::Isomorphic(translation),
+                // The translation reverses a unitig that the two graphs stored in opposite
+                // directions, which is not allowed here. Another choice might work.
+                Err(_) => UnitigIsomorphism::Unresolved,
+            }
+        },
+        Isomorphism::NotIsomorphic(mismatch) => UnitigIsomorphism::NotIsomorphic(mismatch),
+        Isomorphism::Unresolved => UnitigIsomorphism::Unresolved,
+    };
+
+    Ok((result, statistics))
+}
+
+//-----------------------------------------------------------------------------
+
 // Returns the total length of the sequences in the graph.
 fn total_sequence_length<T: Topology>(graph: &T) -> usize {
     (0..graph.nodes()).map(|node| graph.sequence_len(node)).sum()
@@ -429,6 +576,32 @@ pub fn write_mapping<A: Topology, B: Topology, W: Write>(
             Orientation::Reverse => b"-",
         })?;
         writer.write_all(b"\n")?;
+    }
+
+    Ok(())
+}
+
+/// Writes the translation in TSV format.
+///
+/// Each line has the name of a node in the first graph, the start of the interval in it, the length
+/// of the interval, the name of the corresponding node in the second graph, the start of the
+/// interval in it, and the relative orientation as `+` or `-`. There is no header line.
+pub fn write_translation<A: Topology, B: Topology, W: Write>(
+    first: &A, second: &B, translation: &Translation, writer: &mut W
+) -> io::Result<()> {
+    for node in 0..translation.len() {
+        let name = first.node_name(node);
+        for part in translation.parts(node).iter() {
+            writer.write_all(&name)?;
+            write!(writer, "\t{}\t{}\t", part.from, part.len)?;
+            writer.write_all(&second.node_name(part.node))?;
+            write!(writer, "\t{}\t", part.to)?;
+            writer.write_all(match part.orientation {
+                Orientation::Forward => b"+",
+                Orientation::Reverse => b"-",
+            })?;
+            writer.write_all(b"\n")?;
+        }
     }
 
     Ok(())

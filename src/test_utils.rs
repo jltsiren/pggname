@@ -4,6 +4,7 @@
 //! built on them should include the seed in its message.
 
 use crate::isomorphism::NodeMapping;
+use crate::isomorphism::translation::Translation;
 use crate::isomorphism::hashing;
 use crate::topology::{IndexedGraph, Topology};
 
@@ -124,12 +125,132 @@ pub fn permute<T: Topology>(source: &T, permutation: &[usize], flips: &[bool]) -
     result
 }
 
+/// Builds a copy of the graph with every node chopped into fragments of at most `max_len` bp.
+///
+/// The fragments of a node are chained left to right in the forward orientation, so the result
+/// represents the same pangenome. It is the standard way in which two graphs can differ without
+/// being different graphs.
+pub fn chop<T: Topology>(source: &T, max_len: usize) -> IndexedGraph {
+    assert!(max_len > 0, "The fragment length must be positive");
+    let mut result = IndexedGraph::new();
+
+    // The first and last fragment of each node, which inherit its left and right sides.
+    let mut ends: Vec<(usize, usize)> = Vec::with_capacity(source.nodes());
+    for node in 0..source.nodes() {
+        let sequence = source.sequence(node);
+        let mut first = None;
+        let mut previous = None;
+        let mut offset = 0;
+        // A node with an empty sequence still needs one fragment.
+        loop {
+            let end = (offset + max_len).min(sequence.len());
+            let fragment = result.add_node(
+                format!("{}_{}", node, offset).as_bytes(), &sequence[offset..end]
+            );
+            if first.is_none() {
+                first = Some(fragment);
+            }
+            if let Some(previous) = previous {
+                result.add_edge(previous, Orientation::Forward, fragment, Orientation::Forward);
+            }
+            previous = Some(fragment);
+            offset = end;
+            if offset >= sequence.len() {
+                break;
+            }
+        }
+        ends.push((first.unwrap(), previous.unwrap()));
+    }
+
+    // The left side of a node belongs to its first fragment, and the right side to its last.
+    let fragment_of = |node: usize, side: NodeSide| -> usize {
+        match side {
+            NodeSide::Left => ends[node].0,
+            NodeSide::Right => ends[node].1,
+        }
+    };
+    for node in 0..source.nodes() {
+        for side in [NodeSide::Left, NodeSide::Right] {
+            for (neighbor, neighbor_side) in source.neighbors(node, side) {
+                result.add_edge(
+                    fragment_of(node, side), support::exit_orientation(side),
+                    fragment_of(neighbor, neighbor_side), support::entry_orientation(neighbor_side)
+                );
+            }
+        }
+    }
+    result.finalize();
+
+    result
+}
+
+//-----------------------------------------------------------------------------
+
 /// Returns the mapping induced by a permutation and a vector of flips.
 pub fn mapping_of(permutation: &[usize], flips: &[bool]) -> NodeMapping {
     let encoded: Vec<u32> = permutation.iter().zip(flips.iter())
         .map(|(&image, &flip)| (2 * image + (flip as usize)) as u32)
         .collect();
     NodeMapping::from_encoded(encoded)
+}
+
+/// Checks that the translation is a correspondence between the two graphs.
+///
+/// This rebuilds the sequences of the first graph from the parts and marks the covered positions of
+/// the second graph, which is a different formulation from `verify_translation`.
+pub fn is_translation<A: Topology, B: Topology>(
+    first: &A, second: &B, translation: &Translation, allow_flips: bool
+) -> Result<(), String> {
+    if translation.len() != first.nodes() {
+        return Err(format!("The translation covers {} of {} nodes", translation.len(), first.nodes()));
+    }
+
+    // Every node of the first graph must be the concatenation of the parts covering it.
+    for node in 0..first.nodes() {
+        let mut rebuilt: Vec<u8> = Vec::new();
+        for part in translation.parts(node).iter() {
+            if part.orientation == Orientation::Reverse && !allow_flips {
+                return Err(format!("Part of node {} is flipped, but flips are not allowed", node));
+            }
+            let image = second.sequence(part.node);
+            if part.to + part.len > image.len() {
+                return Err(format!("Part of node {} points outside node {}", node, part.node));
+            }
+            let slice = &image[part.to..part.to + part.len];
+            match part.orientation {
+                Orientation::Forward => rebuilt.extend_from_slice(slice),
+                Orientation::Reverse => rebuilt.extend(hashing::reverse_complement(slice)),
+            }
+        }
+        if rebuilt != first.sequence(node).to_vec() {
+            return Err(format!("The parts of node {} do not rebuild its sequence", node));
+        }
+    }
+
+    // Every position of the second graph must be covered exactly once.
+    let mut covered: Vec<Vec<bool>> = (0..second.nodes())
+        .map(|node| vec![false; second.sequence_len(node)])
+        .collect();
+    for node in 0..first.nodes() {
+        for part in translation.parts(node).iter() {
+            let range = part.to..part.to + part.len;
+            for (index, flag) in covered[part.node][range].iter_mut().enumerate() {
+                if *flag {
+                    return Err(format!(
+                        "Offset {} of node {} is covered twice", part.to + index, part.node
+                    ));
+                }
+                *flag = true;
+            }
+        }
+    }
+    for (node, positions) in covered.iter().enumerate() {
+        if let Some(offset) = positions.iter().position(|&value| !value) {
+            return Err(format!("Offset {} of node {} is not covered", offset, node));
+        }
+    }
+
+    Ok(())
 }
 
 //-----------------------------------------------------------------------------

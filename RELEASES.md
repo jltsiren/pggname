@@ -5,7 +5,9 @@
 * New `Topology` trait for structural queries, with implementations for GFA and GBZ graphs.
 * Determines whether two graphs are isomorphic and returns the node mapping.
 * Optionally maps nodes to reverse complements of nodes.
-* `pggname --compare` compares two graphs.
+* Optionally compares maximal non-branching paths instead of nodes, which sees past chopped nodes.
+  A positive answer is then a translation between intervals of nodes.
+* `pggname --compare` compares two graphs, with `--unitigs` for the path-level comparison.
 * An identifier-independent graph name based on the same machinery is under consideration.
   It is not exposed yet, because color refinement cannot tell all graphs apart.
 

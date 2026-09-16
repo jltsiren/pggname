@@ -5,7 +5,7 @@ use getopts::Options;
 use pggname::{Graph, Topology};
 use pggname::graph::{GraphInt, GraphStr, GBZInt, GBZStr};
 use pggname::algorithms;
-use pggname::isomorphism::{self, Isomorphism};
+use pggname::isomorphism::{self, Isomorphism, UnitigIsomorphism};
 use pggname::topology::{GbzTopology, IndexedGraph};
 
 use sha2::{Digest, Sha224, Sha256, Sha384, Sha512_224, Sha512_256, Sha512};
@@ -23,8 +23,13 @@ use std::{env, process};
 fn main() -> Result<(), String> {
     let config = Config::new()?;
     if config.compare {
-        let result = compare_mode(&config)?;
-        process::exit(result);
+        match compare_mode(&config) {
+            Ok(code) => process::exit(code),
+            Err(message) => {
+                eprintln!("{}", message);
+                process::exit(3);
+            },
+        }
     }
     hash_mode(&config)
 }
@@ -95,6 +100,7 @@ struct Config {
     benchmark: bool,
     compare: bool,
     allow_flips: bool,
+    unitigs: bool,
     mapping_file: Option<String>,
 }
 
@@ -114,6 +120,7 @@ impl Config {
         opts.optflag("b", "benchmark", "run benchmarks");
         opts.optflag("c", "compare", "determine whether two graphs are isomorphic (not with -n)");
         opts.optflag("f", "allow-flips", "allow mapping nodes to reverse complements (with -c)");
+        opts.optflag("u", "unitigs", "compare maximal non-branching paths instead of nodes (with -c)");
         opts.optopt("m", "mapping", "write the node mapping to FILE (with -c)", "FILE");
         let matches = opts.parse(&args[1..]).map_err(|e| e.to_string())?;
 
@@ -134,6 +141,7 @@ impl Config {
         let benchmark = matches.opt_present("b");
         let compare = matches.opt_present("c");
         let allow_flips = matches.opt_present("f");
+        let unitigs = matches.opt_present("u");
         let mapping_file = matches.opt_str("m");
 
         if compare {
@@ -144,11 +152,13 @@ impl Config {
             if input_files.len() != 2 {
                 return Err(format!("Option -c requires two graphs, but {} were given", input_files.len()));
             }
-        } else if allow_flips || mapping_file.is_some() {
-            return Err(String::from("Options -f and -m can only be used with -c"));
+        } else if allow_flips || unitigs || mapping_file.is_some() {
+            return Err(String::from("Options -f, -u, and -m can only be used with -c"));
         }
 
-        Ok(Config { input_files, node_ids, store_name, benchmark, compare, allow_flips, mapping_file })
+        Ok(Config {
+            input_files, node_ids, store_name, benchmark, compare, allow_flips, unitigs, mapping_file,
+        })
     }
 }
 
@@ -308,35 +318,75 @@ fn compare<A: Topology, B: Topology>(first: &A, second: &B, config: &Config) -> 
         ..isomorphism::Options::default()
     };
     let start = Instant::now();
-    let (result, statistics) = isomorphism::are_isomorphic_with_statistics(first, second, &options);
-    let seconds = start.elapsed().as_secs_f64();
+
+    // The two modes differ in what a positive answer contains: a bijection between nodes, or a
+    // correspondence between intervals of nodes.
+    let (verdict, reason, code) = if config.unitigs {
+        let (result, statistics) = isomorphism::are_isomorphic_unitigs_with_statistics(
+            first, second, &options
+        )?;
+        report_timing(start, &statistics, config);
+        if let (Some(filename), Some(translation)) = (&config.mapping_file, result.translation()) {
+            let mut writer = create_mapping_file(filename)?;
+            isomorphism::write_translation(first, second, translation, &mut writer)
+                .map_err(|e| format!("Error writing mapping file {}: {}", filename, e))?;
+        }
+        let reason = match &result {
+            UnitigIsomorphism::NotIsomorphic(mismatch) => Some(format!(
+                "The compacted graphs have {}.", mismatch
+            )),
+            _ => None,
+        };
+        let code = match result {
+            UnitigIsomorphism::Isomorphic(_) => 0,
+            UnitigIsomorphism::NotIsomorphic(_) => 1,
+            UnitigIsomorphism::Unresolved => 2,
+        };
+        (result.to_string(), reason, code)
+    } else {
+        let (result, statistics) = isomorphism::are_isomorphic_with_statistics(first, second, &options);
+        report_timing(start, &statistics, config);
+        if let (Some(filename), Some(mapping)) = (&config.mapping_file, result.mapping()) {
+            let mut writer = create_mapping_file(filename)?;
+            isomorphism::write_mapping(first, second, mapping, &mut writer)
+                .map_err(|e| format!("Error writing mapping file {}: {}", filename, e))?;
+        }
+        let reason = match &result {
+            Isomorphism::NotIsomorphic(mismatch) => Some(format!("The graphs have {}.", mismatch)),
+            _ => None,
+        };
+        let code = match result {
+            Isomorphism::Isomorphic(_) => 0,
+            Isomorphism::NotIsomorphic(_) => 1,
+            Isomorphism::Unresolved => 2,
+        };
+        (result.to_string(), reason, code)
+    };
 
     // The verdict goes to stdout, and everything else to stderr.
-    println!("{:<14}  {}  {}", result.to_string(), config.input_files[0], config.input_files[1]);
-    if let Isomorphism::NotIsomorphic(mismatch) = &result {
-        eprintln!("The graphs have {}.", mismatch);
-    }
-    if config.benchmark {
-        eprintln!("Compared the graphs in {:.3} seconds", seconds);
-        eprintln!("  Refinement rounds: {}", statistics.rounds);
-        eprintln!("  Color classes:     {}", statistics.color_classes);
-        eprintln!("  Choices:           {}", statistics.individualizations);
-        eprintln!();
+    println!("{:<14}  {}  {}", verdict, config.input_files[0], config.input_files[1]);
+    if let Some(reason) = reason {
+        eprintln!("{}", reason);
     }
 
-    if let (Some(filename), Some(mapping)) = (&config.mapping_file, result.mapping()) {
-        let file = File::create(filename)
-            .map_err(|e| format!("Error creating mapping file {}: {}", filename, e))?;
-        let mut writer = BufWriter::new(file);
-        isomorphism::write_mapping(first, second, mapping, &mut writer)
-            .map_err(|e| format!("Error writing mapping file {}: {}", filename, e))?;
-    }
+    Ok(code)
+}
 
-    Ok(match result {
-        Isomorphism::Isomorphic(_) => 0,
-        Isomorphism::NotIsomorphic(_) => 1,
-        Isomorphism::Unresolved => 2,
-    })
+fn create_mapping_file(filename: &str) -> Result<BufWriter<File>, String> {
+    let file = File::create(filename)
+        .map_err(|e| format!("Error creating mapping file {}: {}", filename, e))?;
+    Ok(BufWriter::new(file))
+}
+
+fn report_timing(start: Instant, statistics: &isomorphism::Statistics, config: &Config) {
+    if !config.benchmark {
+        return;
+    }
+    eprintln!("Compared the graphs in {:.3} seconds", start.elapsed().as_secs_f64());
+    eprintln!("  Refinement rounds: {}", statistics.rounds);
+    eprintln!("  Color classes:     {}", statistics.color_classes);
+    eprintln!("  Choices:           {}", statistics.individualizations);
+    eprintln!();
 }
 
 fn print_topology_statistics<T: Topology>(graph: &T, input_file: &str) {

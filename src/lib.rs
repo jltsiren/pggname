@@ -14,11 +14,17 @@
 //! graph, up to renaming the nodes?
 //! It builds on the [`topology`] module, which provides the structural view of a graph that the
 //! [`Graph`] trait, being oriented towards canonical serialization, cannot.
+//!
+//! Two graphs may also represent the same pangenome without being isomorphic, because one of them
+//! has chopped long nodes into shorter fragments.
+//! The [`unitigs`] module collapses each maximal non-branching path into a single node, which
+//! removes the difference.
 
 pub mod algorithms;
 pub mod graph;
 pub mod isomorphism;
 pub mod topology;
+pub mod unitigs;
 
 #[cfg(test)]
 mod test_utils;

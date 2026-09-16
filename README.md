@@ -174,6 +174,39 @@ The `--integer-ids` and `--string-ids` options only choose how a GFA graph is st
 They cannot change the answer, because isomorphism does not depend on the node identifiers.
 They may still determine whether the graph can be parsed at all.
 
+### Maximal non-branching paths
+
+Isomorphism as described above is determined at the level of nodes.
+A graph whose long nodes have been chopped into fragments is therefore not isomorphic to the
+original, even though the two represent the same pangenome.
+
+With `--unitigs`, each maximal non-branching path is collapsed into a single node before the
+comparison.
+Chopping a node only adds boundaries inside such a path, so the collapsed graphs are the same.
+This is the relationship the `translation` tag records: the graphs are isomorphic once every node is
+broken into 1 bp pieces.
+
+A positive answer is then a translation rather than a mapping, because the two graphs cut the paths
+in different places.
+Each line of the `--mapping` file has a node name in the first graph, the start of an interval in
+it, the length of the interval, the corresponding node name in the second graph, the start of the
+interval in it, and the relative orientation.
+
+```txt
+$ pggname --compare --unitigs translation.gfa translation.gbz
+s11	0	2	1	0	+
+s11	2	1	2	0	+
+s12	0	1	3	0	+
+```
+
+Here the 3 bp node `s11` of the first graph covers the 2 bp node `1` and the 1 bp node `2` of the
+second, which was built by chopping the nodes to at most 2 bp.
+
+A unitig can be traversed from either end, and the direction has to be chosen the same way in both
+graphs.
+The only information that survives chopping is the sequence, so the unitig is stored in the
+direction where the sequence is lexicographically smaller.
+
 ### Limitations
 
 Graph isomorphism is not known to be solvable in polynomial time, and the implementation gives up
@@ -185,11 +218,15 @@ A positive answer is always verified against the sequences and the edges, so it 
 A negative answer is given only when it follows from an exact invariant or from an exhaustive
 search.
 
-Isomorphism is determined at the level of nodes.
-A graph whose long nodes have been chopped into fragments is therefore not isomorphic to the
-original, even though the two represent the same pangenome.
-Recognizing these as the same graph requires comparing maximal non-branching paths instead of
-nodes, which is not implemented yet.
+With `--unitigs`, there are two further limitations.
+
+* A unitig whose sequence equals its own reverse complement can be stored in either direction, and
+  the two graphs may choose differently.
+  Without `--allow-flips`, such a graph may be reported as `unresolved`.
+* A connected component that is a cycle with no branches has no unitig end to start from.
+  A canonical starting point would have to be defined by the minimal rotation of a circular
+  sequence, which may fall in the middle of a node.
+  Such components are reported as an error rather than handled incorrectly.
 
 ## Notes
 

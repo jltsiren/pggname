@@ -3,6 +3,7 @@ use super::*;
 use crate::algorithms;
 use crate::graph::{GraphInt, GraphStr};
 use crate::test_utils::*;
+use crate::isomorphism::translation::Translation;
 use crate::topology::{GbzTopology, IndexedGraph};
 
 use gbz::{GBZ, Orientation};
@@ -615,6 +616,230 @@ fn large_graph() {
     let (result, statistics) = are_isomorphic_with_statistics(&graph, &permuted, &options(true));
     assert!(result.is_isomorphic(), "Expected an isomorphism for a large graph, got {}", result);
     assert_eq!(statistics.individualizations, 0, "The search should not have been needed");
+}
+
+//-----------------------------------------------------------------------------
+
+//-----------------------------------------------------------------------------
+
+// Checks that the graphs are equivalent at the level of maximal non-branching paths, and that the
+// translation survives the independent checker.
+fn check_equivalent<A: Topology, B: Topology>(
+    first: &A, second: &B, allow_flips: bool, context: &str
+) -> Translation {
+    let result = are_isomorphic_unitigs(first, second, &options(allow_flips))
+        .unwrap_or_else(|e| panic!("Failed to compare {}: {}", context, e));
+    let translation = match result {
+        UnitigIsomorphism::Isomorphic(translation) => translation,
+        other => panic!("Expected an equivalence for {}, got {}", context, other),
+    };
+    if let Err(error) = is_translation(first, second, &translation, allow_flips) {
+        panic!("The translation for {} is not valid: {}", context, error);
+    }
+
+    // The stated semantics: the graphs are isomorphic once every node is broken into 1 bp pieces.
+    let result = are_isomorphic(&chop(first, 1), &chop(second, 1), &options(allow_flips));
+    assert!(
+        result.is_isomorphic(),
+        "The 1 bp graphs of {} are not isomorphic: {}", context, result
+    );
+
+    translation
+}
+
+#[test]
+fn chopping_is_invisible() {
+    for &seed in SEEDS.iter() {
+        let mut rng = StdRng::seed_from_u64(seed);
+        let graph = random_graph(25, 30, &mut rng);
+        // Skip the graphs that contain a branch-free cycle.
+        if are_isomorphic_unitigs(&graph, &graph, &options(false)).is_err() {
+            continue;
+        }
+
+        for max_len in [1, 2, 3] {
+            let chopped = chop(&graph, max_len);
+            let context = format!("chopped at {}, seed {}", max_len, seed);
+            for allow_flips in [false, true] {
+                check_equivalent(&graph, &chopped, allow_flips, &context);
+                check_equivalent(&chopped, &graph, allow_flips, &context);
+            }
+        }
+    }
+}
+
+#[test]
+fn chopping_and_permuting_is_invisible() {
+    for &seed in SEEDS.iter() {
+        let mut rng = StdRng::seed_from_u64(seed);
+        let graph = random_graph(25, 30, &mut rng);
+        if are_isomorphic_unitigs(&graph, &graph, &options(false)).is_err() {
+            continue;
+        }
+
+        let chopped = chop(&graph, 2);
+        let permutation = random_permutation(chopped.nodes(), &mut rng);
+        let flips = random_flips(chopped.nodes(), &mut rng);
+        let permuted = permute(&chopped, &permutation, &flips);
+        check_equivalent(&graph, &permuted, true, &format!("chopped and permuted, seed {}", seed));
+    }
+}
+
+#[test]
+fn node_isomorphic_graphs_translate_one_to_one() {
+    for &seed in SEEDS.iter() {
+        let mut rng = StdRng::seed_from_u64(seed);
+        let graph = random_graph(25, 30, &mut rng);
+        if are_isomorphic_unitigs(&graph, &graph, &options(false)).is_err() {
+            continue;
+        }
+        let permutation = random_permutation(graph.nodes(), &mut rng);
+        let permuted = permute(&graph, &permutation, &no_flips(graph.nodes()));
+
+        let translation = check_equivalent(&graph, &permuted, true, &format!("seed {}", seed));
+        // Neither graph splits a node of the other, so the pieces line up and the translation is a
+        // bijection. The exception is a unitig whose sequence is its own reverse complement: the
+        // two graphs may store it in opposite directions, and then the pieces line up in reverse.
+        if translation.is_forward() {
+            assert!(
+                translation.is_node_mapping(),
+                "The translation should be one to one (seed {})", seed
+            );
+        }
+    }
+
+    // A path of distinct, non-palindromic sequences has no such ambiguity.
+    for &seed in SEEDS.iter() {
+        let mut rng = StdRng::seed_from_u64(seed);
+        let graph = rigid_graph(8);
+        let permutation = random_permutation(graph.nodes(), &mut rng);
+        let permuted = permute(&graph, &permutation, &no_flips(graph.nodes()));
+
+        let translation = check_equivalent(&graph, &permuted, false, &format!("a rigid graph, seed {}", seed));
+        assert!(
+            translation.is_node_mapping(),
+            "The translation for a rigid graph should be one to one (seed {})", seed
+        );
+        assert!(translation.is_forward(), "The translation for a rigid graph should be forward");
+    }
+}
+
+//-----------------------------------------------------------------------------
+
+#[test]
+fn chopped_graphs_are_equivalent() {
+    // `translation.gbz` is `translation.gfa` chopped to at most 2 bp, without the segment that is
+    // not on any path. Node-level isomorphism cannot see past either difference.
+    let path = support::get_test_data("translation.gfa");
+    let text = std::fs::read_to_string(&path).unwrap();
+    let full = gfa_text(&text);
+    let gbz = gbz_file("translation.gbz");
+    let from_gbz = GbzTopology::new(&gbz).unwrap();
+
+    // The unused segment is a real difference, so the graphs are not equivalent.
+    assert_eq!(
+        are_isomorphic_unitigs(&full, &from_gbz, &options(false)).unwrap(),
+        UnitigIsomorphism::NotIsomorphic(Mismatch::NodeCount),
+        "translation.gfa and translation.gbz should differ"
+    );
+
+    // Without it, only the chopping differs.
+    let trimmed: String = text.lines()
+        .filter(|line| !line.contains("unused"))
+        .map(|line| format!("{}\n", line))
+        .collect();
+    let trimmed = gfa_text(&trimmed);
+    assert_eq!(trimmed.nodes(), 7, "Wrong number of nodes in the trimmed graph");
+    assert_eq!(from_gbz.nodes(), 9, "Wrong number of nodes in the GBZ graph");
+
+    assert!(
+        !are_isomorphic(&trimmed, &from_gbz, &options(false)).is_isomorphic(),
+        "The chopped graph should not be isomorphic at the level of nodes"
+    );
+    let translation = check_equivalent(&trimmed, &from_gbz, false, "translation.gfa vs translation.gbz");
+    assert!(
+        !translation.is_node_mapping(),
+        "The translation should not be one to one, as the GBZ graph is chopped"
+    );
+    assert!(translation.is_forward(), "The translation should not need flips");
+}
+
+#[test]
+fn realistic_graph_is_equivalent_when_chopped() {
+    let gbz = gbz_file("micb-kir3dl1.gbz");
+    let topology = GbzTopology::new(&gbz).unwrap();
+    let indexed = IndexedGraph::from_topology(&topology);
+    let chopped = chop(&indexed, 1);
+
+    assert!(
+        !are_isomorphic(&topology, &chopped, &options(false)).is_isomorphic(),
+        "The chopped graph should not be isomorphic at the level of nodes"
+    );
+    check_equivalent(&topology, &chopped, false, "micb-kir3dl1.gbz chopped to 1 bp");
+}
+
+//-----------------------------------------------------------------------------
+
+#[test]
+fn unitig_isomorphism_detects_differences() {
+    let graph = gfa_text(BASE);
+    let cases: Vec<(&str, &str)> = vec![
+        ("a changed base",
+         "S\t1\tGATT\nS\t2\tACC\nS\t3\tTTG\nS\t4\tCCA\n\
+          L\t1\t+\t2\t+\nL\t1\t+\t3\t+\nL\t2\t+\t4\t+\nL\t3\t+\t4\t+\n"),
+        ("an added edge",
+         "S\t1\tGATT\nS\t2\tACA\nS\t3\tTTG\nS\t4\tCCA\n\
+          L\t1\t+\t2\t+\nL\t1\t+\t3\t+\nL\t2\t+\t4\t+\nL\t3\t+\t4\t+\nL\t1\t+\t4\t+\n"),
+        ("a longer sequence",
+         "S\t1\tGATTA\nS\t2\tACA\nS\t3\tTTG\nS\t4\tCCA\n\
+          L\t1\t+\t2\t+\nL\t1\t+\t3\t+\nL\t2\t+\t4\t+\nL\t3\t+\t4\t+\n"),
+        ("an extra node",
+         "S\t1\tGATT\nS\t2\tACA\nS\t3\tTTG\nS\t4\tCCA\nS\t5\tG\n\
+          L\t1\t+\t2\t+\nL\t1\t+\t3\t+\nL\t2\t+\t4\t+\nL\t3\t+\t4\t+\n"),
+    ];
+
+    for (description, text) in cases {
+        let other = gfa_text(text);
+        // Chopping the modified graph must not hide the difference.
+        for chopped in [other.clone(), chop(&other, 1)] {
+            for allow_flips in [false, true] {
+                let result = are_isomorphic_unitigs(&graph, &chopped, &options(allow_flips)).unwrap();
+                assert!(
+                    matches!(result, UnitigIsomorphism::NotIsomorphic(_)),
+                    "Expected a mismatch for {} (flips {}), got {}", description, allow_flips, result
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn branch_free_cycles_are_reported() {
+    let cycle = gfa_text("S\t1\tGAT\nS\t2\tTACA\nL\t1\t+\t2\t+\nL\t2\t+\t1\t+\n");
+    let other = gfa_text(BASE);
+    assert!(
+        are_isomorphic_unitigs(&cycle, &other, &options(false)).is_err(),
+        "A branch-free cycle should be reported as an error"
+    );
+    assert!(
+        are_isomorphic_unitigs(&other, &cycle, &options(false)).is_err(),
+        "A branch-free cycle should be reported as an error"
+    );
+}
+
+#[test]
+fn reverse_complemented_graphs_need_flips() {
+    // A path whose nodes are all reverse complemented and reordered is the same pangenome only if
+    // flips are allowed.
+    let graph = gfa_text("S\t1\tGATT\nS\t2\tACA\nL\t1\t+\t2\t+\n");
+    let flipped = gfa_text("S\t1\tTGT\nS\t2\tAATC\nL\t1\t+\t2\t+\n");
+
+    check_equivalent(&graph, &flipped, true, "a reverse complemented path");
+    let result = are_isomorphic_unitigs(&graph, &flipped, &options(false)).unwrap();
+    assert!(
+        !result.is_isomorphic(),
+        "The reverse complement should not be equivalent without flips, got {}", result
+    );
 }
 
 //-----------------------------------------------------------------------------
