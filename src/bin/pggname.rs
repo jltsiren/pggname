@@ -2,17 +2,19 @@ use gbz::{GBZ, GraphName};
 
 use getopts::Options;
 
-use pggname::Graph;
+use pggname::{Graph, Topology};
 use pggname::graph::{GraphInt, GraphStr, GBZInt, GBZStr};
 use pggname::algorithms;
+use pggname::isomorphism::{self, Isomorphism};
+use pggname::topology::{GbzTopology, IndexedGraph};
 
 use sha2::{Digest, Sha224, Sha256, Sha384, Sha512_224, Sha512_256, Sha512};
 use sha2::digest;
 
 use simple_sds::serialize;
 
-use std::fs::OpenOptions;
-use std::io::BufReader;
+use std::fs::{File, OpenOptions};
+use std::io::{BufReader, BufWriter};
 use std::time::Instant;
 use std::{env, process};
 
@@ -20,7 +22,16 @@ use std::{env, process};
 
 fn main() -> Result<(), String> {
     let config = Config::new()?;
+    if config.compare {
+        let result = compare_mode(&config)?;
+        process::exit(result);
+    }
+    hash_mode(&config)
+}
 
+//-----------------------------------------------------------------------------
+
+fn hash_mode(config: &Config) -> Result<(), String> {
     for input_file in config.input_files.iter() {
         if GBZ::is_gbz(input_file) {
             let (graph, version) = read_gbz(input_file, config.benchmark)?;
@@ -82,19 +93,28 @@ struct Config {
     node_ids: NodeIds,
     store_name: bool,
     benchmark: bool,
+    compare: bool,
+    allow_flips: bool,
+    mapping_file: Option<String>,
 }
 
 impl Config {
     fn new() -> Result<Self, String> {
         let args: Vec<String> = env::args().collect();
         let program = args[0].clone();
-        let header = format!("Usage: {} [options] graph1 [graph2 ...]", program);
+        let header = format!(
+            "Usage: {} [options] graph1 [graph2 ...]\n       {} -c [options] graph1 graph2",
+            program, program
+        );
 
         let mut opts = Options::new();
         opts.optflag("i", "integer-ids", "use integer node identifiers");
         opts.optflag("s", "string-ids", "use string node identifiers");
         opts.optflag("n", "store-name", "overwrite names and relationships in GBZ tags (not with -s, -b)");
         opts.optflag("b", "benchmark", "run benchmarks");
+        opts.optflag("c", "compare", "determine whether two graphs are isomorphic (not with -n)");
+        opts.optflag("f", "allow-flips", "allow mapping nodes to reverse complements (with -c)");
+        opts.optopt("m", "mapping", "write the node mapping to FILE (with -c)", "FILE");
         let matches = opts.parse(&args[1..]).map_err(|e| e.to_string())?;
 
         let input_files = if !matches.free.is_empty() {
@@ -112,8 +132,23 @@ impl Config {
         };
         let store_name = matches.opt_present("n");
         let benchmark = matches.opt_present("b");
+        let compare = matches.opt_present("c");
+        let allow_flips = matches.opt_present("f");
+        let mapping_file = matches.opt_str("m");
 
-        Ok(Config { input_files, node_ids, store_name, benchmark })
+        if compare {
+            // Storing a name is a property of a single graph.
+            if store_name {
+                return Err(String::from("Option -n cannot be used with -c"));
+            }
+            if input_files.len() != 2 {
+                return Err(format!("Option -c requires two graphs, but {} were given", input_files.len()));
+            }
+        } else if allow_flips || mapping_file.is_some() {
+            return Err(String::from("Options -f and -m can only be used with -c"));
+        }
+
+        Ok(Config { input_files, node_ids, store_name, benchmark, compare, allow_flips, mapping_file })
     }
 }
 
@@ -200,6 +235,117 @@ fn benchmark_all<G: Graph>(graph: &G) {
     benchmark::<Sha512_224, G>(graph, "SHA-512/224");
     benchmark::<Sha512_256, G>(graph, "SHA-512/256");
     benchmark::<Sha512, G>(graph, "SHA-512");
+}
+
+//-----------------------------------------------------------------------------
+
+//-----------------------------------------------------------------------------
+
+// A graph that can provide a topological view of itself.
+//
+// GBZ graphs are kept as they are, because the view borrows the adjacency information instead of
+// copying it. GFA graphs have to be indexed, as they store each edge at one endpoint only.
+//
+// The variants differ a lot in size, but there are exactly two of these per run.
+#[allow(clippy::large_enum_variant)]
+enum Input {
+    Gbz(GBZ),
+    Gfa(IndexedGraph),
+}
+
+fn read_input(input_file: &str, config: &Config) -> Result<Input, String> {
+    if GBZ::is_gbz(input_file) {
+        let (graph, _) = read_gbz(input_file, config.benchmark)?;
+        return Ok(Input::Gbz(graph));
+    }
+
+    let start = Instant::now();
+    let graph = match config.node_ids {
+        NodeIds::Integer => IndexedGraph::from(&read_gfa::<GraphInt>(input_file, config.benchmark)?),
+        NodeIds::String => IndexedGraph::from(&read_gfa::<GraphStr>(input_file, config.benchmark)?),
+        NodeIds::Auto => match read_gfa::<GraphInt>(input_file, config.benchmark) {
+            Ok(graph) => IndexedGraph::from(&graph),
+            Err(_) => IndexedGraph::from(&read_gfa::<GraphStr>(input_file, config.benchmark)?),
+        },
+    };
+    if config.benchmark {
+        eprintln!("Indexed the graph in {:.3} seconds", start.elapsed().as_secs_f64());
+        eprintln!();
+    }
+
+    Ok(Input::Gfa(graph))
+}
+
+// Returns the exit code: 0 for isomorphic, 1 for not isomorphic, and 2 for unresolved.
+fn compare_mode(config: &Config) -> Result<i32, String> {
+    let first = read_input(&config.input_files[0], config)?;
+    let second = read_input(&config.input_files[1], config)?;
+
+    // The node identifiers play no part in isomorphism, so the two representations only differ in
+    // how the graph is stored.
+    match (&first, &second) {
+        (Input::Gbz(first), Input::Gbz(second)) => {
+            compare(&GbzTopology::new(first)?, &GbzTopology::new(second)?, config)
+        },
+        (Input::Gbz(first), Input::Gfa(second)) => {
+            compare(&GbzTopology::new(first)?, second, config)
+        },
+        (Input::Gfa(first), Input::Gbz(second)) => {
+            compare(first, &GbzTopology::new(second)?, config)
+        },
+        (Input::Gfa(first), Input::Gfa(second)) => compare(first, second, config),
+    }
+}
+
+fn compare<A: Topology, B: Topology>(first: &A, second: &B, config: &Config) -> Result<i32, String> {
+    if config.benchmark {
+        print_topology_statistics(first, &config.input_files[0]);
+        print_topology_statistics(second, &config.input_files[1]);
+    }
+
+    let options = isomorphism::Options {
+        allow_flips: config.allow_flips,
+        ..isomorphism::Options::default()
+    };
+    let start = Instant::now();
+    let (result, statistics) = isomorphism::are_isomorphic_with_statistics(first, second, &options);
+    let seconds = start.elapsed().as_secs_f64();
+
+    // The verdict goes to stdout, and everything else to stderr.
+    println!("{:<14}  {}  {}", result.to_string(), config.input_files[0], config.input_files[1]);
+    if let Isomorphism::NotIsomorphic(mismatch) = &result {
+        eprintln!("The graphs have {}.", mismatch);
+    }
+    if config.benchmark {
+        eprintln!("Compared the graphs in {:.3} seconds", seconds);
+        eprintln!("  Refinement rounds: {}", statistics.rounds);
+        eprintln!("  Color classes:     {}", statistics.color_classes);
+        eprintln!("  Choices:           {}", statistics.individualizations);
+        eprintln!();
+    }
+
+    if let (Some(filename), Some(mapping)) = (&config.mapping_file, result.mapping()) {
+        let file = File::create(filename)
+            .map_err(|e| format!("Error creating mapping file {}: {}", filename, e))?;
+        let mut writer = BufWriter::new(file);
+        isomorphism::write_mapping(first, second, mapping, &mut writer)
+            .map_err(|e| format!("Error writing mapping file {}: {}", filename, e))?;
+    }
+
+    Ok(match result {
+        Isomorphism::Isomorphic(_) => 0,
+        Isomorphism::NotIsomorphic(_) => 1,
+        Isomorphism::Unresolved => 2,
+    })
+}
+
+fn print_topology_statistics<T: Topology>(graph: &T, input_file: &str) {
+    let (node_count, edge_count, seq_len) = graph.statistics();
+    eprintln!("Graph {}:", input_file);
+    eprintln!("  Nodes:    {}", node_count);
+    eprintln!("  Edges:    {}", edge_count);
+    eprintln!("  Sequence: {} bp", seq_len);
+    eprintln!();
 }
 
 //-----------------------------------------------------------------------------

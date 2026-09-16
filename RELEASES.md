@@ -1,5 +1,14 @@
 # Pggname releases
 
+## Pggname 0.4.0 (unreleased)
+
+* New `Topology` trait for structural queries, with implementations for GFA and GBZ graphs.
+* Determines whether two graphs are isomorphic and returns the node mapping.
+* Optionally maps nodes to reverse complements of nodes.
+* `pggname --compare` compares two graphs.
+* An identifier-independent graph name based on the same machinery is under consideration.
+  It is not exposed yet, because color refinement cannot tell all graphs apart.
+
 ## Pggname 0.3.0 (2026-08-24)
 
 * Supports GBZ version 3 with Zstandard compressed BWT.

@@ -10,6 +10,7 @@ See [refget](https://ga4gh.github.io/refget/) for a similar naming scheme for se
 * Tagging various indexes with the name of the corresponding graph.
 * As a reference name in a read alignment file.
 * For representing relationships such as "A is a subgraph of B" or "A can be translated to B".
+* For checking whether two graphs are the same, up to the node identifiers.
     * If A is a subgraph of B, graph B can be used as a reference with reads aligned to A.
     * Some tools chop long nodes to smaller fragments, but coordinates in the chopped graph can be translated to the original coordinates.
 
@@ -80,6 +81,8 @@ The canonical GFA representation of the graph does not include any other informa
 Each line is terminated by a single `\n`, and the fields in a line are separated by a single `\t`.
 There are no empty fields or empty lines.
 The content of each field must be as in valid GFA.
+A node with an empty sequence therefore has no canonical GFA representation, though the graph
+implementations in this crate tolerate one.
 
 ### Nodes (GFA segments)
 
@@ -134,6 +137,59 @@ And its stable name is:
     * Using string identifiers requires more memory.
     * String identifiers are faster with GFA graphs and slower with GBZ graphs.
 * All SHA-2 variants.
+
+## Graph isomorphism
+
+Two graphs have the same name only if their node identifiers agree.
+Graphs that differ only in the identifiers therefore get different names, even though they
+represent the same pangenome.
+The `--compare` option answers that question directly.
+
+Graphs A and B are isomorphic if there is a bijection between their nodes that preserves the
+sequences and the edges.
+With `--allow-flips`, a node may also map to the reverse complement of another node.
+Because flipping a node swaps its left and right sides, every edge endpoint at that node then
+changes orientation.
+
+Note that the reverse complement of a sequence preserves case here, and characters outside `ACGT`
+map to themselves.
+This differs from the usual convention, but it makes the reverse complement its own inverse, which
+the canonical GFA format requires because it treats sequences as case sensitive.
+
+### Command line
+
+```txt
+pggname --compare graph1 graph2
+```
+
+The verdict is written to standard output as `isomorphic`, `not isomorphic`, or `unresolved`,
+followed by the two file names.
+The reason for a negative answer is written to standard error.
+The exit code is 0 for isomorphic, 1 for not isomorphic, and 2 for unresolved.
+
+Use `--mapping FILE` to write the node mapping as tab-separated lines of node name in the first
+graph, node name in the second graph, and relative orientation as `+` or `-`.
+
+The `--integer-ids` and `--string-ids` options only choose how a GFA graph is stored in memory.
+They cannot change the answer, because isomorphism does not depend on the node identifiers.
+They may still determine whether the graph can be parsed at all.
+
+### Limitations
+
+Graph isomorphism is not known to be solvable in polynomial time, and the implementation gives up
+after a bounded search.
+An `unresolved` answer is therefore a real possibility, though a rare one: the sequences make most
+nodes easy to tell apart, and a realistic pangenome graph is usually settled without any search.
+
+A positive answer is always verified against the sequences and the edges, so it is never wrong.
+A negative answer is given only when it follows from an exact invariant or from an exhaustive
+search.
+
+Isomorphism is determined at the level of nodes.
+A graph whose long nodes have been chopped into fragments is therefore not isomorphic to the
+original, even though the two represent the same pangenome.
+Recognizing these as the same graph requires comparing maximal non-branching paths instead of
+nodes, which is not implemented yet.
 
 ## Notes
 
