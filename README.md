@@ -132,11 +132,10 @@ And its stable name is:
 
 ## Other versions
 
-* Node identifiers interpreted as integers or strings.
-    * The canonical order of the nodes depends on the type of the identifiers.
-    * Using string identifiers requires more memory.
-    * String identifiers are faster with GFA graphs and slower with GBZ graphs.
-* All SHA-2 variants.
+The scheme could also be defined with another SHA-2 variant, or by always interpreting the node
+identifiers as strings.
+Both choices give a different name for the same graph, so only the version described above is
+implemented.
 
 ## Graph isomorphism
 
@@ -179,10 +178,6 @@ The verdict is written to standard output as `isomorphic`, `not isomorphic`, or 
 followed by the two file names.
 The reason for a negative answer is written to standard error.
 The exit code is 0 for isomorphic, 1 for not isomorphic, and 2 for unresolved.
-
-The `--integer-ids` and `--string-ids` options only choose how a GFA graph is stored in memory.
-They cannot change the answer, because isomorphism does not depend on the node identifiers.
-They may still determine whether the graph can be parsed at all.
 
 ### Translation
 

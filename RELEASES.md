@@ -10,6 +10,9 @@
 * `pggname --compare` compares two graphs, with `--translation` for writing the translation.
 * An identifier-independent graph name based on the same machinery is under consideration.
   It is not exposed yet, because color refinement cannot tell all graphs apart.
+* Removed `pggname --benchmark` and the options for choosing between integer and string node
+  identifiers. GFA graphs still use integer identifiers when possible and string identifiers
+  otherwise.
 
 ## Pggname 0.3.0 (2026-08-24)
 
