@@ -3,11 +3,11 @@
 ## Pggname 0.4.0 (unreleased)
 
 * New `Topology` trait for structural queries, with implementations for GFA and GBZ graphs.
-* Determines whether two graphs are isomorphic and returns the node mapping.
-* Optionally maps nodes to reverse complements of nodes.
-* Optionally compares maximal non-branching paths instead of nodes, which sees past chopped nodes.
-  A positive answer is then a translation between intervals of nodes.
-* `pggname --compare` compares two graphs, with `--unitigs` for the path-level comparison.
+* Determines whether two graphs are isomorphic at the level of maximal non-branching paths, which
+  sees past chopped nodes. A node may map to the reverse complement of another node.
+* A positive answer is a translation that pairs each path in the first graph with the path in the
+  second graph that spells the same sequence.
+* `pggname --compare` compares two graphs, with `--translation` for writing the translation.
 * An identifier-independent graph name based on the same machinery is under consideration.
   It is not exposed yet, because color refinement cannot tell all graphs apart.
 

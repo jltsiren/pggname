@@ -17,8 +17,9 @@
 //! The relative orientation is never guessed during propagation. If node `x` is reached through
 //! side `sx` in the first graph and node `y` through side `sy` in the second, then side `sx` of `x`
 //! corresponds to side `sy` of `y`, which determines whether the node is flipped. This is why
-//! allowing flips costs almost nothing: an edge determines the relative orientation of its
-//! endpoints, so the orientations of a whole connected component follow from its first matched pair.
+//! mapping nodes to reverse complements costs almost nothing: an edge determines the relative
+//! orientation of its endpoints, so the orientations of a whole connected component follow from its
+//! first matched pair.
 
 use crate::topology::Topology;
 
@@ -80,7 +81,6 @@ pub(crate) struct Matcher<'a, A: Topology, B: Topology> {
     first_coloring: &'a Coloring,
     second_coloring: &'a Coloring,
     classes: &'a Classes,
-    options: &'a Options,
 
     // Image of each node of the first graph, encoded as `2 * node + flip`, or `NONE`.
     image: Vec<u32>,
@@ -118,10 +118,10 @@ impl<'a, A: Topology, B: Topology> Matcher<'a, A, B> {
         let first_members = class_members(classes.first_classes(), classes.len());
         let second_members = class_members(classes.second_classes(), classes.len());
         let interchangeable = interchangeable_classes(
-            first, second, classes, &first_members, &second_members, options
+            first, second, classes, &first_members, &second_members
         );
         Matcher {
-            first, second, first_coloring, second_coloring, classes, options,
+            first, second, first_coloring, second_coloring, classes,
             image: vec![NONE; first.nodes()],
             taken: vec![false; second.nodes()],
             queue: Vec::new(),
@@ -247,9 +247,7 @@ impl<'a, A: Topology, B: Topology> Matcher<'a, A, B> {
                 // The refinement cannot tell the sides of the node apart, so both orientations are
                 // worth trying. This is the only place where a flip is ever guessed.
                 result.push((target, Orientation::Forward));
-                if self.options.allow_flips {
-                    result.push((target, Orientation::Reverse));
-                }
+                result.push((target, Orientation::Reverse));
             } else {
                 let flip = self.first_coloring.head_side(node) != self.second_coloring.head_side(target);
                 let orientation = if flip { Orientation::Reverse } else { Orientation::Forward };
@@ -327,7 +325,7 @@ impl<'a, A: Topology, B: Topology> Matcher<'a, A, B> {
         let image = self.second.sequence(target);
         if sequence == image {
             Some(Orientation::Forward)
-        } else if self.options.allow_flips && hashing::equals_reverse_complement(&sequence, &image) {
+        } else if hashing::equals_reverse_complement(&sequence, &image) {
             Some(Orientation::Reverse)
         } else {
             None
@@ -422,9 +420,6 @@ impl<'a, A: Topology, B: Topology> Matcher<'a, A, B> {
 
     // Assigns a node of the first graph to a node of the second graph.
     fn assign(&mut self, node: usize, image: usize, orientation: Orientation) -> Result<(), ()> {
-        if orientation == Orientation::Reverse && !self.options.allow_flips {
-            return Err(());
-        }
         let encoded = (2 * image + (orientation as usize)) as u32;
 
         if self.image[node] != NONE {
@@ -557,8 +552,7 @@ fn class_members(class_of: &[u32], class_count: usize) -> (Vec<u32>, Vec<u32>) {
 // them into a choice point.
 fn interchangeable_classes<A: Topology, B: Topology>(
     first: &A, second: &B, classes: &Classes,
-    first_members: &(Vec<u32>, Vec<u32>), second_members: &(Vec<u32>, Vec<u32>),
-    options: &Options
+    first_members: &(Vec<u32>, Vec<u32>), second_members: &(Vec<u32>, Vec<u32>)
 ) -> Vec<bool> {
     let mut result = vec![false; classes.len()];
 
@@ -580,12 +574,11 @@ fn interchangeable_classes<A: Topology, B: Topology>(
             continue;
         }
 
-        // Every member must have the same sequence, up to reverse complement when flips are
-        // allowed. The colors alone would not be enough, as they are hashes.
+        // Every member must have the same sequence, up to reverse complement. The colors alone
+        // would not be enough, as they are hashes.
         let sequence = first.sequence(node).to_vec();
         let same = |other: &[u8]| -> bool {
-            other == sequence ||
-                (options.allow_flips && hashing::equals_reverse_complement(&sequence, other))
+            other == sequence || hashing::equals_reverse_complement(&sequence, other)
         };
         *flag = here.iter().all(|&n| same(&first.sequence(n as usize)))
             && there.iter().all(|&n| same(&second.sequence(n as usize)));

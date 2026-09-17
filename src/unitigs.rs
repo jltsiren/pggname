@@ -20,9 +20,8 @@
 //!
 //! This is exact unless `S` equals its own reverse complement, in which case both directions give
 //! the same sequence and the choice is arbitrary. The two graphs may then store such a unitig in
-//! opposite directions. Because the unitig-level comparison allows flips, the mapping can still be
-//! found; see [`crate::isomorphism::are_isomorphic_unitigs`] for what this means for
-//! orientation-preserving comparisons.
+//! opposite directions. Because a node may map to the reverse complement of another node, the
+//! mapping is still found; see [`crate::isomorphism::are_isomorphic_unitigs`].
 //!
 //! # Limitations
 //!
@@ -324,7 +323,7 @@ fn linked<T: Topology>(graph: &T, node: usize, side: NodeSide) -> Option<(usize,
 }
 
 // Appends the sequence of the node, read in the given orientation.
-fn append_piece<T: Topology>(graph: &T, node: usize, orientation: Orientation, target: &mut Vec<u8>) {
+pub(crate) fn append_piece<T: Topology>(graph: &T, node: usize, orientation: Orientation, target: &mut Vec<u8>) {
     let sequence = graph.sequence(node);
     match orientation {
         Orientation::Forward => target.extend_from_slice(&sequence),

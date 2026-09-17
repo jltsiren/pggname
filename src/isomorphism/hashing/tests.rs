@@ -70,7 +70,7 @@ fn reference_orientation_is_consistent() {
     for sequence in sequences.iter() {
         let rc = reverse_complement(sequence);
         assert_eq!(
-            hash_canonical_sequence(sequence, true), hash_canonical_sequence(&rc, true),
+            hash_canonical_sequence(sequence), hash_canonical_sequence(&rc),
             "Different canonical hashes for {} and its reverse complement",
             String::from_utf8_lossy(sequence)
         );
@@ -79,10 +79,11 @@ fn reference_orientation_is_consistent() {
             "Same reference orientation for {} and its reverse complement",
             String::from_utf8_lossy(sequence)
         );
-        // Without flips, the canonical form is the sequence itself.
+        // The canonical form is the smaller of the sequence and its reverse complement.
+        let smaller: &[u8] = if **sequence <= rc[..] { sequence } else { &rc };
         assert_eq!(
-            hash_canonical_sequence(sequence, false), hash_sequence(sequence),
-            "Wrong canonical hash without flips for {}", String::from_utf8_lossy(sequence)
+            hash_canonical_sequence(sequence), hash_sequence(smaller),
+            "Wrong canonical hash for {}", String::from_utf8_lossy(sequence)
         );
     }
 }

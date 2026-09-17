@@ -15,12 +15,8 @@ use std::io::BufReader;
 
 //-----------------------------------------------------------------------------
 
-fn options(allow_flips: bool) -> Options {
-    Options { allow_flips, ..Options::default() }
-}
-
-fn signature_of<T: Topology>(graph: &T, allow_flips: bool) -> (u64, u64) {
-    Coloring::new(graph, &options(allow_flips)).signature()
+fn signature_of<T: Topology>(graph: &T) -> (u64, u64) {
+    Coloring::new(graph, &Options::default()).signature()
 }
 
 fn gfa_text(text: &str) -> IndexedGraph {
@@ -37,17 +33,15 @@ fn permutation_does_not_change_the_signature() {
         let graph = random_graph(30, 45, &mut rng);
         let permutation = random_permutation(graph.nodes(), &mut rng);
         let permuted = permute(&graph, &permutation, &no_flips(graph.nodes()));
-        for allow_flips in [false, true] {
-            assert_eq!(
-                signature_of(&graph, allow_flips), signature_of(&permuted, allow_flips),
-                "Permuting the nodes changed the signature (seed {}, flips {})", seed, allow_flips
-            );
-        }
+        assert_eq!(
+            signature_of(&graph), signature_of(&permuted),
+            "Permuting the nodes changed the signature (seed {})", seed
+        );
     }
 }
 
 #[test]
-fn flips_do_not_change_the_signature_when_allowed() {
+fn flips_do_not_change_the_signature() {
     for &seed in SEEDS.iter() {
         let mut rng = StdRng::seed_from_u64(seed);
         let graph = random_graph(30, 45, &mut rng);
@@ -55,27 +49,19 @@ fn flips_do_not_change_the_signature_when_allowed() {
         let flips = random_flips(graph.nodes(), &mut rng);
         let permuted = permute(&graph, &permutation, &flips);
         assert_eq!(
-            signature_of(&graph, true), signature_of(&permuted, true),
+            signature_of(&graph), signature_of(&permuted),
             "Flipping the nodes changed the signature (seed {})", seed
         );
     }
-}
 
-#[test]
-fn flips_change_the_signature_when_not_allowed() {
-    // A path of distinct, non-palindromic sequences. Reverse complementing one node changes the
-    // graph, and without flips that must be visible in the signature.
+    // A path of distinct, non-palindromic sequences, with a single node reverse complemented.
     let graph = rigid_graph(6);
     let mut flips = no_flips(graph.nodes());
     flips[2] = true;
     let flipped = permute(&graph, &(0..graph.nodes()).collect::<Vec<_>>(), &flips);
-    assert_ne!(
-        signature_of(&graph, false), signature_of(&flipped, false),
-        "Flipping a node did not change the signature without flips"
-    );
     assert_eq!(
-        signature_of(&graph, true), signature_of(&flipped, true),
-        "Flipping a node changed the signature with flips"
+        signature_of(&graph), signature_of(&flipped),
+        "Flipping a single node changed the signature"
     );
 }
 
@@ -94,12 +80,10 @@ fn signature_detects_changes() {
 
     for (name, text) in [("a changed base", changed_base), ("an added edge", extra_edge), ("a moved edge", moved_edge)] {
         let other = gfa_text(text);
-        for allow_flips in [false, true] {
-            assert_ne!(
-                signature_of(&graph, allow_flips), signature_of(&other, allow_flips),
-                "The signature did not detect {} (flips {})", name, allow_flips
-            );
-        }
+        assert_ne!(
+            signature_of(&graph), signature_of(&other),
+            "The signature did not detect {}", name
+        );
     }
 }
 
@@ -114,12 +98,10 @@ fn backends_agree() {
     let gbz: GBZ = serialize::load_from(&path).unwrap();
     let from_gbz = GbzTopology::new(&gbz).unwrap();
 
-    for allow_flips in [false, true] {
-        assert_eq!(
-            signature_of(&from_gfa, allow_flips), signature_of(&from_gbz, allow_flips),
-            "The GFA and GBZ backends disagree on the signature (flips {})", allow_flips
-        );
-    }
+    assert_eq!(
+        signature_of(&from_gfa), signature_of(&from_gbz),
+        "The GFA and GBZ backends disagree on the signature"
+    );
 }
 
 //-----------------------------------------------------------------------------
@@ -132,7 +114,7 @@ fn refinement_separates_nodes() {
     let gfa: GraphStr = algorithms::parse_gfa(BufReader::new(file)).unwrap();
     let graph = IndexedGraph::from(&gfa);
 
-    let coloring = Coloring::new(&graph, &options(false));
+    let coloring = Coloring::new(&graph, &Options::default());
     assert_eq!(
         coloring.classes(), graph.nodes(),
         "Refinement did not give every node of example.gfa a distinct color"
@@ -145,7 +127,7 @@ fn refinement_stops_when_stable() {
     // A cycle of identical nodes is stable from the start: every node looks the same.
     let text = "S\t1\tAT\nS\t2\tAT\nS\t3\tAT\nL\t1\t+\t2\t+\nL\t2\t+\t3\t+\nL\t3\t+\t1\t+\n";
     let graph = gfa_text(text);
-    let coloring = Coloring::new(&graph, &options(false));
+    let coloring = Coloring::new(&graph, &Options::default());
     assert_eq!(coloring.classes(), 1, "A cycle of identical nodes should have one color class");
     assert_eq!(coloring.rounds(), 0, "Refinement should stop immediately when the coloring is stable");
 }
@@ -161,8 +143,8 @@ fn classes_match_for_isomorphic_graphs() {
         let flips = random_flips(graph.nodes(), &mut rng);
         let permuted = permute(&graph, &permutation, &flips);
 
-        let first = Coloring::new(&graph, &options(true));
-        let second = Coloring::new(&permuted, &options(true));
+        let first = Coloring::new(&graph, &Options::default());
+        let second = Coloring::new(&permuted, &Options::default());
         let classes = Classes::new(&first, &second).unwrap_or_else(|e| {
             panic!("Failed to build classes for isomorphic graphs (seed {}): {}", seed, e)
         });
@@ -185,9 +167,9 @@ fn classes_detect_mismatches() {
     let other = gfa_text("S\t1\tGATT\nS\t2\tACC\nL\t1\t+\t2\t+\n");
     let smaller = gfa_text("S\t1\tGATT\n");
 
-    let first = Coloring::new(&graph, &options(false));
-    let second = Coloring::new(&other, &options(false));
-    let third = Coloring::new(&smaller, &options(false));
+    let first = Coloring::new(&graph, &Options::default());
+    let second = Coloring::new(&other, &Options::default());
+    let third = Coloring::new(&smaller, &Options::default());
 
     assert_eq!(Classes::new(&first, &second), Err(Mismatch::Colors), "Different sequences were not detected");
     assert_eq!(Classes::new(&first, &third), Err(Mismatch::Colors), "Different node counts were not detected");

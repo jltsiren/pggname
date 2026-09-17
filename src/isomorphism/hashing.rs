@@ -157,11 +157,10 @@ pub fn hash_reverse_complement(sequence: &[u8]) -> u64 {
 
 /// Returns a hash value for the canonical form of the sequence.
 ///
-/// If `allow_flips` is `true`, the canonical form is the smaller of the sequence and its reverse
-/// complement, so that a node and its reverse complement get the same value. Otherwise the
-/// canonical form is the sequence itself.
-pub fn hash_canonical_sequence(sequence: &[u8], allow_flips: bool) -> u64 {
-    if !allow_flips || compare_to_reverse_complement(sequence) != Ordering::Greater {
+/// The canonical form is the smaller of the sequence and its reverse complement, so that a node and
+/// its reverse complement get the same value.
+pub fn hash_canonical_sequence(sequence: &[u8]) -> u64 {
+    if compare_to_reverse_complement(sequence) != Ordering::Greater {
         hash_sequence(sequence)
     } else {
         hash_reverse_complement(sequence)

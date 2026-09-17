@@ -1,234 +1,192 @@
-//! Expanding a unitig mapping into a correspondence between nodes.
+//! Expanding a unitig mapping into a correspondence between paths of nodes.
 //!
 //! An isomorphism between the unitig graphs of two graphs matches the sequences of the unitigs
-//! position by position. Each graph cuts its unitigs into nodes in its own way, so overlaying the
-//! two sets of cuts gives a correspondence between intervals of nodes.
+//! position by position. Each graph cuts its unitigs into nodes in its own way, so a unitig becomes
+//! a pair of walks: the nodes the first graph reads along the path, and the nodes the second graph
+//! reads along the same sequence.
 
 use crate::topology::Topology;
-use crate::unitigs::Unitigs;
+use crate::unitigs::{self, Unitigs};
 
-use super::{Mismatch, NodeMapping, Options, hashing};
+use super::{Mismatch, NodeMapping};
 
 use gbz::Orientation;
+use gbz::support;
 
 //-----------------------------------------------------------------------------
 
-/// An interval of a node of the first graph and the interval of the second graph it corresponds to.
+/// A correspondence between the maximal non-branching paths of two graphs.
 ///
-/// The intervals have the same length. If the orientation is [`Orientation::Forward`], the two
-/// sequences are the same. Otherwise the second is the reverse complement of the first.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct Part {
-    /// Start of the interval in the node of the first graph.
-    pub from: usize,
-    /// Node in the second graph.
-    pub node: usize,
-    /// Start of the interval in the node of the second graph.
-    pub to: usize,
-    /// Length of the interval.
-    pub len: usize,
-    /// Orientation of the second interval relative to the first.
-    pub orientation: Orientation,
-}
-
-//-----------------------------------------------------------------------------
-
-/// A correspondence between the nodes of two graphs.
+/// Pair `i` consists of the walk formed by unitig `i` of the first graph and the walk in the second
+/// graph that spells the same sequence. A walk is a sequence of nodes, each read in a given
+/// orientation, and consecutive nodes in it are joined by an edge.
 ///
-/// Every node of the first graph is covered by one or more [`Part`]s, in increasing order of
-/// [`Part::from`]. Together they tile the sequence of the node, and the intervals they point to
-/// tile the sequences of the second graph.
+/// A pair can be read from either end, and both walks are then reversed together. The direction is
+/// chosen so that the first node of the first walk is in forward orientation. A walk that begins in
+/// reverse and ends in forward orientation begins in reverse from either end; it is left in the
+/// canonical direction of the path, where the sequence is lexicographically smaller.
 ///
-/// Unlike a [`NodeMapping`], this is not a bijection between nodes. A node of one graph may
-/// correspond to a part of a node of the other, or to several nodes in a row.
+/// Because the two graphs cut the paths in different places, this is not a bijection between nodes:
+/// a node of one graph may correspond to a part of a node of the other, or to several nodes in a
+/// row.
+///
+/// The correspondence does not borrow the graphs. Use [`Topology::node_name`] to convert the
+/// indexes back to node names.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Translation {
-    // The parts of node `i` are `offsets[i]..offsets[i + 1]`.
-    offsets: Vec<u32>,
-    parts: Vec<Part>,
+    // The nodes of walk `i` are `first_offsets[i]..first_offsets[i + 1]`, encoded as
+    // `2 * node + orientation`. The second graph is stored the same way.
+    first: Vec<u32>,
+    first_offsets: Vec<u32>,
+    second: Vec<u32>,
+    second_offsets: Vec<u32>,
 }
 
 impl Translation {
-    /// Returns the number of nodes in the first graph.
+    /// Returns the number of walk pairs.
     pub fn len(&self) -> usize {
-        self.offsets.len() - 1
+        self.first_offsets.len() - 1
     }
 
-    /// Returns `true` if the first graph has no nodes.
+    /// Returns `true` if there are no walk pairs.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
-    /// Returns the parts covering the given node of the first graph.
-    pub fn parts(&self, node: usize) -> &[Part] {
-        &self.parts[self.offsets[node] as usize..self.offsets[node + 1] as usize]
+    /// Returns the walk in the first graph as `(node, orientation)` pairs.
+    pub fn first_walk(&self, index: usize) -> impl ExactSizeIterator<Item = (usize, Orientation)> {
+        walk(&self.first, &self.first_offsets, index)
     }
 
-    /// Returns the total number of parts.
-    pub fn part_count(&self) -> usize {
-        self.parts.len()
+    /// Returns the walk in the second graph as `(node, orientation)` pairs.
+    pub fn second_walk(&self, index: usize) -> impl ExactSizeIterator<Item = (usize, Orientation)> {
+        walk(&self.second, &self.second_offsets, index)
     }
+}
 
-    /// Returns `true` if no part reverses the orientation.
-    pub fn is_forward(&self) -> bool {
-        self.parts.iter().all(|part| part.orientation == Orientation::Forward)
-    }
+// Returns the given walk from the encoded nodes and the offsets.
+fn walk(
+    nodes: &[u32], offsets: &[u32], index: usize
+) -> impl ExactSizeIterator<Item = (usize, Orientation)> {
+    let range = offsets[index] as usize..offsets[index + 1] as usize;
+    nodes[range].iter().map(|&encoded| decode(encoded))
+}
 
-    /// Returns `true` if the correspondence is a bijection between nodes.
-    ///
-    /// This holds when neither graph splits a node of the other, which is the case when the two
-    /// graphs are already isomorphic at the level of nodes.
-    pub fn is_node_mapping(&self) -> bool {
-        self.parts.iter().enumerate().all(|(index, part)| {
-            part.from == 0 && part.to == 0 && self.offsets[index + 1] - self.offsets[index] == 1
-        })
+// Encodes an oriented node as `2 * node + orientation`.
+fn encode(node: usize, orientation: Orientation) -> u32 {
+    (2 * node + (orientation as usize)) as u32
+}
+
+// Decodes an oriented node.
+fn decode(encoded: u32) -> (usize, Orientation) {
+    let encoded = encoded as usize;
+    let orientation = if encoded & 1 == 0 { Orientation::Forward } else { Orientation::Reverse };
+    (encoded / 2, orientation)
+}
+
+// Reverses the walk: the nodes come in the opposite order, each in the opposite orientation.
+fn reverse(nodes: &mut [u32]) {
+    nodes.reverse();
+    for node in nodes.iter_mut() {
+        *node ^= 1;
     }
 }
 
 //-----------------------------------------------------------------------------
 
-// Expands a mapping between unitigs into a correspondence between nodes.
+// Expands a mapping between unitigs into a correspondence between paths of nodes.
 pub(crate) fn expand(first: &Unitigs, second: &Unitigs, mapping: &NodeMapping) -> Translation {
-    let nodes = first.node_count();
-    let mut offsets: Vec<u32> = Vec::with_capacity(nodes + 1);
-    let mut parts: Vec<Part> = Vec::new();
-    offsets.push(0);
+    let mut result = Translation {
+        first: Vec::new(),
+        first_offsets: vec![0],
+        second: Vec::new(),
+        second_offsets: vec![0],
+    };
 
-    let mut buffer: Vec<Part> = Vec::new();
-    for node in 0..nodes {
-        buffer.clear();
-        let piece = first.piece_of(node);
-        let unitig = first.unitig_of(node);
-        let (image, unitig_orientation) = mapping.get(unitig);
-        let len = first.graph().sequence_len(unitig);
-        let flipped = unitig_orientation == Orientation::Reverse;
+    for unitig in 0..first.len() {
+        let (image, orientation) = mapping.get(unitig);
+        let here = result.first.len();
+        let there = result.second.len();
+        result.first.extend(first.pieces(unitig).map(|piece| encode(piece.node, piece.orientation)));
+        result.second.extend(
+            second.pieces(image).map(|piece| encode(piece.node, piece.orientation))
+        );
 
-        // The interval of the piece, in the coordinates of the image unitig.
-        let (start, end) = if flipped {
-            (len - piece.end, len - piece.start)
-        } else {
-            (piece.start, piece.end)
-        };
-
-        for other in second.pieces_in(image, start, end) {
-            let overlap_start = start.max(other.start);
-            let overlap_end = end.min(other.end);
-            if overlap_start >= overlap_end {
-                continue;
-            }
-
-            // Whether each node is read in the same direction as the first unitig.
-            let forward_here = piece.orientation == Orientation::Forward;
-            let forward_there = (other.orientation == Orientation::Forward) != flipped;
-
-            // The overlap in the coordinates of the first unitig.
-            let (here_start, here_end) = if flipped {
-                (len - overlap_end, len - overlap_start)
-            } else {
-                (overlap_start, overlap_end)
-            };
-
-            buffer.push(Part {
-                from: if forward_here { here_start - piece.start } else { piece.end - here_end },
-                node: other.node,
-                to: if forward_there { overlap_start - other.start } else { other.end - overlap_end },
-                len: overlap_end - overlap_start,
-                orientation: if forward_here == forward_there {
-                    Orientation::Forward
-                } else {
-                    Orientation::Reverse
-                },
-            });
+        // The image unitig is stored in the opposite direction, so its walk must be reversed to
+        // spell the same sequence as the walk in the first graph.
+        if orientation == Orientation::Reverse {
+            reverse(&mut result.second[there..]);
+        }
+        // Both walks spell the same sequence, so the pair can be flipped as a whole. Do that when
+        // it puts the first node of the first walk in forward orientation.
+        let walk = &result.first[here..];
+        let ends_in_reverse = decode(walk[walk.len() - 1]).1 == Orientation::Reverse;
+        if decode(walk[0]).1 == Orientation::Reverse && ends_in_reverse {
+            reverse(&mut result.first[here..]);
+            reverse(&mut result.second[there..]);
         }
 
-        buffer.sort_unstable_by_key(|part| part.from);
-        parts.extend_from_slice(&buffer);
-        offsets.push(parts.len() as u32);
+        result.first_offsets.push(result.first.len() as u32);
+        result.second_offsets.push(result.second.len() as u32);
     }
 
-    Translation { offsets, parts }
+    result
 }
 
 //-----------------------------------------------------------------------------
 
 /// Verifies that the translation is a correspondence between the two graphs.
 ///
-/// This checks that the parts tile the sequences of both graphs and that the corresponding
-/// sequences match. It runs in linear time and does not use any hash values.
+/// This checks that every walk is a path in the right graph, that the two walks of a pair spell the
+/// same sequence, and that the walks visit every node of both graphs exactly once. It runs in
+/// linear time and does not use any hash values.
 pub fn verify_translation<A: Topology, B: Topology>(
-    first: &A, second: &B, translation: &Translation, options: &Options
+    first: &A, second: &B, translation: &Translation
 ) -> Result<(), Mismatch> {
-    if translation.len() != first.nodes() {
+    let mut first_visits = vec![0u32; first.nodes()];
+    let mut second_visits = vec![0u32; second.nodes()];
+    let mut here: Vec<u8> = Vec::new();
+    let mut there: Vec<u8> = Vec::new();
+
+    for index in 0..translation.len() {
+        here.clear();
+        there.clear();
+        check_walk(first, translation.first_walk(index), &mut first_visits, &mut here)?;
+        check_walk(second, translation.second_walk(index), &mut second_visits, &mut there)?;
+        if here != there {
+            return Err(Mismatch::Structure);
+        }
+    }
+
+    // Every node must be visited exactly once, which also covers the number of nodes.
+    if first_visits.iter().any(|&count| count != 1) || second_visits.iter().any(|&count| count != 1) {
         return Err(Mismatch::NodeCount);
     }
 
-    // Intervals of the second graph, to be checked for tiling afterwards.
-    let mut covered: Vec<(usize, usize, usize)> = Vec::with_capacity(translation.part_count());
+    Ok(())
+}
 
-    for node in 0..first.nodes() {
-        let sequence = first.sequence(node);
-        let mut offset = 0;
-        for part in translation.parts(node).iter() {
-            if part.orientation == Orientation::Reverse && !options.allow_flips {
-                return Err(Mismatch::Structure);
-            }
-            // The parts must tile the node from start to end, without gaps or overlaps.
-            if part.from != offset {
-                return Err(Mismatch::Structure);
-            }
-            offset += part.len;
-            if offset > sequence.len() {
-                return Err(Mismatch::Structure);
-            }
-
-            let image = second.sequence(part.node);
-            if part.to + part.len > image.len() {
-                return Err(Mismatch::Structure);
-            }
-            let here = &sequence[part.from..part.from + part.len];
-            let there = &image[part.to..part.to + part.len];
-            let matches = match part.orientation {
-                Orientation::Forward => here == there,
-                Orientation::Reverse => hashing::equals_reverse_complement(here, there),
-            };
-            if !matches {
-                return Err(Mismatch::Structure);
-            }
-
-            covered.push((part.node, part.to, part.len));
+// Checks that the walk is a path in the graph, counting the visits and building the sequence.
+fn check_walk<T: Topology>(
+    graph: &T, walk: impl Iterator<Item = (usize, Orientation)>,
+    visits: &mut [u32], sequence: &mut Vec<u8>
+) -> Result<(), Mismatch> {
+    let mut previous: Option<(usize, Orientation)> = None;
+    for (node, orientation) in walk {
+        if node >= visits.len() {
+            return Err(Mismatch::NodeCount);
         }
-        if offset != sequence.len() {
-            return Err(Mismatch::Structure);
-        }
-    }
-
-    // Every position of the second graph must be covered exactly once.
-    covered.sort_unstable();
-    let mut expected = 0;
-    let mut previous = usize::MAX;
-    for (node, start, len) in covered {
-        if node != previous {
-            // Finish the previous node before moving on.
-            if previous != usize::MAX && expected != second.sequence_len(previous) {
+        visits[node] += 1;
+        // Consecutive nodes must be joined by an edge.
+        if let Some((from, from_orientation)) = previous {
+            let exists = graph.neighbors(from, support::exit_side(from_orientation))
+                .any(|(next, side)| next == node && side == support::entry_side(orientation));
+            if !exists {
                 return Err(Mismatch::Structure);
             }
-            previous = node;
-            expected = 0;
         }
-        if start != expected {
-            return Err(Mismatch::Structure);
-        }
-        expected += len;
-    }
-    if previous != usize::MAX && expected != second.sequence_len(previous) {
-        return Err(Mismatch::Structure);
-    }
-
-    // Nodes of the second graph that were never covered.
-    let total: usize = (0..second.nodes()).map(|node| second.sequence_len(node)).sum();
-    let mapped: usize = (0..first.nodes()).map(|node| first.sequence_len(node)).sum();
-    if total != mapped {
-        return Err(Mismatch::SequenceLength);
+        unitigs::append_piece(graph, node, orientation, sequence);
+        previous = Some((node, orientation));
     }
 
     Ok(())

@@ -6,10 +6,10 @@
 //! graphs are not isomorphic.
 //!
 //! The refinement works on node sides rather than nodes. Each side gets a color, and the color of a
-//! node is derived from the colors of its two sides. When flips are allowed, the two sides of a
-//! node are interchangeable a priori, so the node color is built from the *unordered* pair of side
-//! colors, and the side the smaller color belongs to becomes the head side. When flips are not
-//! allowed, the left and right sides are distinct, and the ordered pair is used.
+//! node is derived from the colors of its two sides. Because a node may map to the reverse
+//! complement of another node, the two sides of a node are interchangeable a priori. The node color
+//! is therefore built from the *unordered* pair of side colors, and the side the smaller color
+//! belongs to becomes the head side.
 //!
 //! A node whose two sides have the same color is *symmetric*: the refinement cannot tell its sides
 //! apart. Such a node carries a free choice of relative orientation. Because an edge determines the
@@ -21,7 +21,7 @@ use crate::topology::Topology;
 use super::{Mismatch, Options};
 use super::hashing::{self, combine};
 
-use gbz::{NodeSide, Orientation};
+use gbz::NodeSide;
 use gbz::support;
 
 #[cfg(test)]
@@ -57,8 +57,8 @@ impl Coloring {
             classes: 0,
         };
 
-        let (left, right) = initial_colors(graph, options);
-        result.update(left, right, options);
+        let (left, right) = initial_colors(graph);
+        result.update(left, right);
 
         let mut scratch = Vec::new();
         result.classes = count_classes(&result.colors, &mut scratch);
@@ -69,7 +69,7 @@ impl Coloring {
             }
             let (left, right) = result.refined_colors(graph);
             let mut candidate = result.clone();
-            candidate.update(left, right, options);
+            candidate.update(left, right);
             let classes = count_classes(&candidate.colors, &mut scratch);
             // A round that does not split any class cannot be followed by one that does.
             if classes <= result.classes {
@@ -137,21 +137,13 @@ impl Coloring {
     }
 
     // Derives the node colors, head sides, and symmetry from the side colors.
-    fn update(&mut self, left: Vec<u64>, right: Vec<u64>, options: &Options) {
+    fn update(&mut self, left: Vec<u64>, right: Vec<u64>) {
         for node in 0..self.colors.len() {
             let (left, right) = (left[node], right[node]);
-            if options.allow_flips {
-                // The sides are interchangeable a priori, so the pair must be unordered.
-                self.colors[node] = combine(left.min(right), right.max(left));
-                self.head_is_right[node] = right < left;
-                self.symmetric[node] = left == right;
-            } else {
-                // The left and right sides are distinct, so the pair is ordered and the left side
-                // is always the head side.
-                self.colors[node] = combine(left, right);
-                self.head_is_right[node] = false;
-                self.symmetric[node] = false;
-            }
+            // The sides are interchangeable a priori, so the pair must be unordered.
+            self.colors[node] = combine(left.min(right), right.max(left));
+            self.head_is_right[node] = right < left;
+            self.symmetric[node] = left == right;
         }
     }
 
@@ -188,20 +180,16 @@ impl Coloring {
 //-----------------------------------------------------------------------------
 
 // Computes the side colors for the first round.
-fn initial_colors<T: Topology>(graph: &T, options: &Options) -> (Vec<u64>, Vec<u64>) {
+fn initial_colors<T: Topology>(graph: &T) -> (Vec<u64>, Vec<u64>) {
     let nodes = graph.nodes();
     let mut left = vec![0; nodes];
     let mut right = vec![0; nodes];
 
     for node in 0..nodes {
         let sequence = graph.sequence(node);
-        let key = hashing::hash_canonical_sequence(&sequence, options.allow_flips);
-        let palindrome = options.allow_flips && hashing::is_palindrome(&sequence);
-        let reference = if options.allow_flips {
-            hashing::reference_orientation(&sequence)
-        } else {
-            Orientation::Forward
-        };
+        let key = hashing::hash_canonical_sequence(&sequence);
+        let palindrome = hashing::is_palindrome(&sequence);
+        let reference = hashing::reference_orientation(&sequence);
         // The side the sequence starts from gets bit 0. For a palindrome, the sequence cannot tell
         // the sides apart, so both get bit 0.
         let head = support::entry_side(reference);

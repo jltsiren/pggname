@@ -17,10 +17,6 @@ use std::io::BufReader;
 
 //-----------------------------------------------------------------------------
 
-fn options(allow_flips: bool) -> Options {
-    Options { allow_flips, ..Options::default() }
-}
-
 fn gfa_text(text: &str) -> IndexedGraph {
     let graph: GraphStr = algorithms::parse_gfa(BufReader::new(text.as_bytes())).unwrap();
     IndexedGraph::from(&graph)
@@ -40,14 +36,14 @@ fn gbz_file(filename: &'static str) -> GBZ {
 
 // Checks that the result is an isomorphism, using the independent checker.
 fn check_isomorphic<A: Topology, B: Topology>(
-    first: &A, second: &B, allow_flips: bool, context: &str
+    first: &A, second: &B, context: &str
 ) -> NodeMapping {
-    let result = are_isomorphic(first, second, &options(allow_flips));
+    let result = are_isomorphic(first, second, &Options::default());
     let mapping = match result {
         Isomorphism::Isomorphic(mapping) => mapping,
         other => panic!("Expected an isomorphism for {}, got {}", context, other),
     };
-    if let Err(error) = is_isomorphism(first, second, &mapping, allow_flips) {
+    if let Err(error) = is_isomorphism(first, second, &mapping) {
         panic!("The mapping for {} is not an isomorphism: {}", context, error);
     }
     mapping
@@ -67,11 +63,11 @@ fn permuted_graphs_are_isomorphic() {
         // If the fixture itself is wrong, the test would be vacuous.
         let injected = mapping_of(&permutation, &flips);
         assert!(
-            is_isomorphism(&graph, &permuted, &injected, false).is_ok(),
+            is_isomorphism(&graph, &permuted, &injected).is_ok(),
             "The injected permutation is not an isomorphism (seed {})", seed
         );
 
-        check_isomorphic(&graph, &permuted, false, &format!("seed {}", seed));
+        check_isomorphic(&graph, &permuted, &format!("seed {}", seed));
     }
 }
 
@@ -86,11 +82,11 @@ fn flipped_graphs_are_isomorphic() {
 
         let injected = mapping_of(&permutation, &flips);
         assert!(
-            is_isomorphism(&graph, &permuted, &injected, true).is_ok(),
+            is_isomorphism(&graph, &permuted, &injected).is_ok(),
             "The injected permutation is not an isomorphism (seed {})", seed
         );
 
-        check_isomorphic(&graph, &permuted, true, &format!("seed {}", seed));
+        check_isomorphic(&graph, &permuted, &format!("seed {}", seed));
     }
 }
 
@@ -103,7 +99,7 @@ fn rigid_graphs_have_a_unique_isomorphism() {
         let flips = no_flips(graph.nodes());
         let permuted = permute(&graph, &permutation, &flips);
 
-        let mapping = check_isomorphic(&graph, &permuted, false, &format!("seed {}", seed));
+        let mapping = check_isomorphic(&graph, &permuted, &format!("seed {}", seed));
         // The graph has no automorphisms, so the mapping must be the injected permutation.
         assert_eq!(
             mapping, mapping_of(&permutation, &flips),
@@ -117,9 +113,7 @@ fn a_graph_is_isomorphic_to_itself() {
     for &seed in SEEDS.iter() {
         let mut rng = StdRng::seed_from_u64(seed);
         let graph = random_graph(30, 45, &mut rng);
-        for allow_flips in [false, true] {
-            check_isomorphic(&graph, &graph, allow_flips, &format!("seed {}, flips {}", seed, allow_flips));
-        }
+        check_isomorphic(&graph, &graph, &format!("seed {}", seed));
     }
 }
 
@@ -129,15 +123,13 @@ fn backends_are_interchangeable() {
     let gbz = gbz_file("example.gbz");
     let from_gbz = GbzTopology::new(&gbz).unwrap();
 
-    for allow_flips in [false, true] {
-        let mapping = check_isomorphic(&from_gfa, &from_gbz, allow_flips, "example.gfa vs example.gbz");
-        // Both views list the nodes in the same order, and the graph is rigid.
-        assert!(
-            mapping.iter().all(|(source, destination, _)| source == destination),
-            "Wrong mapping between the GFA and GBZ views (flips {})", allow_flips
-        );
-        assert!(mapping.is_forward(), "The mapping should not flip any node (flips {})", allow_flips);
-    }
+    let mapping = check_isomorphic(&from_gfa, &from_gbz, "example.gfa vs example.gbz");
+    // Both views list the nodes in the same order, and the graph is rigid.
+    assert!(
+        mapping.iter().all(|(source, destination, _)| source == destination),
+        "Wrong mapping between the GFA and GBZ views"
+    );
+    assert!(mapping.is_forward(), "The mapping should not flip any node");
 }
 
 #[test]
@@ -149,10 +141,10 @@ fn mapping_inverts() {
         let flips = random_flips(graph.nodes(), &mut rng);
         let permuted = permute(&graph, &permutation, &flips);
 
-        let mapping = check_isomorphic(&graph, &permuted, true, &format!("seed {}", seed));
+        let mapping = check_isomorphic(&graph, &permuted, &format!("seed {}", seed));
         let inverse = mapping.invert();
         assert!(
-            is_isomorphism(&permuted, &graph, &inverse, true).is_ok(),
+            is_isomorphism(&permuted, &graph, &inverse).is_ok(),
             "The inverse mapping is not an isomorphism (seed {})", seed
         );
         assert_eq!(inverse.invert(), mapping, "Inverting twice changed the mapping (seed {})", seed);
@@ -194,16 +186,13 @@ fn single_changes_are_detected() {
 
     for (description, text, expected) in cases {
         let other = gfa_text(text);
-        for allow_flips in [false, true] {
-            let result = are_isomorphic(&graph, &other, &options(allow_flips));
-            match (&result, expected) {
-                (Isomorphism::NotIsomorphic(found), Some(expected)) => assert_eq!(
-                    *found, expected,
-                    "Wrong reason for {} (flips {})", description, allow_flips
-                ),
-                (Isomorphism::NotIsomorphic(_), None) => {},
-                _ => panic!("Expected a mismatch for {} (flips {}), got {}", description, allow_flips, result),
-            }
+        let result = are_isomorphic(&graph, &other, &Options::default());
+        match (&result, expected) {
+            (Isomorphism::NotIsomorphic(found), Some(expected)) => assert_eq!(
+                *found, expected, "Wrong reason for {}", description
+            ),
+            (Isomorphism::NotIsomorphic(_), None) => {},
+            _ => panic!("Expected a mismatch for {}, got {}", description, result),
         }
     }
 }
@@ -217,13 +206,11 @@ fn reverse_complementing_one_node_is_detected() {
         "S\t1\tGATT\nS\t2\tTGT\nS\t3\tTTG\nS\t4\tCCA\n\
          L\t1\t+\t2\t+\nL\t1\t+\t3\t+\nL\t2\t+\t4\t+\nL\t3\t+\t4\t+\n"
     );
-    for allow_flips in [false, true] {
-        let result = are_isomorphic(&graph, &flipped, &options(allow_flips));
-        assert!(
-            matches!(result, Isomorphism::NotIsomorphic(_)),
-            "A reverse complemented sequence was not detected (flips {}), got {}", allow_flips, result
-        );
-    }
+    let result = are_isomorphic(&graph, &flipped, &Options::default());
+    assert!(
+        matches!(result, Isomorphism::NotIsomorphic(_)),
+        "A reverse complemented sequence was not detected, got {}", result
+    );
 }
 
 #[test]
@@ -231,7 +218,7 @@ fn different_sequence_lengths_with_equal_totals() {
     // Total sequence lengths agree, so the mismatch must come from the colors.
     let first = gfa_text("S\t1\tGGG\nS\t2\tCCCCC\nL\t1\t+\t2\t+\n");
     let second = gfa_text("S\t1\tGGGG\nS\t2\tCCCC\nL\t1\t+\t2\t+\n");
-    let result = are_isomorphic(&first, &second, &options(false));
+    let result = are_isomorphic(&first, &second, &Options::default());
     assert_eq!(
         result, Isomorphism::NotIsomorphic(Mismatch::Colors),
         "Wrong result for graphs with equal total sequence length"
@@ -254,7 +241,7 @@ fn chopped_graphs_are_not_isomorphic() {
     let gbz = gbz_file("translation.gbz");
     let from_gbz = GbzTopology::new(&gbz).unwrap();
 
-    let result = are_isomorphic(&from_gfa, &from_gbz, &options(false));
+    let result = are_isomorphic(&from_gfa, &from_gbz, &Options::default());
     assert_eq!(
         result, Isomorphism::NotIsomorphic(Mismatch::NodeCount),
         "Wrong result for a chopped graph"
@@ -264,7 +251,7 @@ fn chopped_graphs_are_not_isomorphic() {
 #[test]
 fn empty_graphs_are_isomorphic() {
     let graph = IndexedGraph::new();
-    let result = are_isomorphic(&graph, &graph, &options(false));
+    let result = are_isomorphic(&graph, &graph, &Options::default());
     match result {
         Isomorphism::Isomorphic(mapping) => assert!(mapping.is_empty(), "The mapping should be empty"),
         other => panic!("Empty graphs should be isomorphic, got {}", other),
@@ -277,13 +264,11 @@ fn self_loops_are_distinguished() {
     // pairs can agree.
     let loop_graph = gfa_text("S\t1\tGAT\nS\t2\tTA\nL\t1\t+\t2\t+\nL\t2\t+\t2\t-\n");
     let twin_graph = gfa_text("S\t1\tGAT\nS\t2\tTA\nS\t3\tTA\nL\t1\t+\t2\t+\nL\t2\t+\t3\t-\n");
-    for allow_flips in [false, true] {
-        let result = are_isomorphic(&loop_graph, &twin_graph, &options(allow_flips));
-        assert!(
-            matches!(result, Isomorphism::NotIsomorphic(_)),
-            "A self-loop was confused with a twin node (flips {}), got {}", allow_flips, result
-        );
-    }
+    let result = are_isomorphic(&loop_graph, &twin_graph, &Options::default());
+    assert!(
+        matches!(result, Isomorphism::NotIsomorphic(_)),
+        "A self-loop was confused with a twin node, got {}", result
+    );
 
     // All three kinds of self-loop survive a permutation.
     let graph = gfa_text(
@@ -292,7 +277,7 @@ fn self_loops_are_distinguished() {
     let mut rng = StdRng::seed_from_u64(SEEDS[0]);
     let permutation = random_permutation(graph.nodes(), &mut rng);
     let permuted = permute(&graph, &permutation, &no_flips(graph.nodes()));
-    check_isomorphic(&graph, &permuted, false, "a graph with self-loops");
+    check_isomorphic(&graph, &permuted, "a graph with self-loops");
 }
 
 //-----------------------------------------------------------------------------
@@ -362,34 +347,32 @@ fn refinement_cannot_separate_regular_graphs() {
     ];
 
     for (description, first, second) in pairs.iter() {
-        for allow_flips in [false, true] {
-            let settings = options(allow_flips);
+        let settings = Options::default();
 
-            // The refinement must not be able to tell the graphs apart. Without this, the test
-            // would silently become an early-reject test and stop exercising the search.
-            let first_coloring = coloring::Coloring::new(first, &settings);
-            let second_coloring = coloring::Coloring::new(second, &settings);
-            assert_eq!(
-                first_coloring.signature(), second_coloring.signature(),
-                "The refinement separated {} (flips {})", description, allow_flips
-            );
+        // The refinement must not be able to tell the graphs apart. Without this, the test would
+        // silently become an early-reject test and stop exercising the search.
+        let first_coloring = coloring::Coloring::new(first, &settings);
+        let second_coloring = coloring::Coloring::new(second, &settings);
+        assert_eq!(
+            first_coloring.signature(), second_coloring.signature(),
+            "The refinement separated {}", description
+        );
 
-            // With a budget, the search must settle the question.
-            let result = are_isomorphic(first, second, &settings);
-            assert_eq!(
-                result, Isomorphism::NotIsomorphic(Mismatch::Structure),
-                "Wrong result for {} (flips {})", description, allow_flips
-            );
+        // With a budget, the search must settle the question.
+        let result = are_isomorphic(first, second, &settings);
+        assert_eq!(
+            result, Isomorphism::NotIsomorphic(Mismatch::Structure),
+            "Wrong result for {}", description
+        );
 
-            // Without a budget, the question cannot be settled.
-            let result = are_isomorphic(
-                first, second, &Options { search_budget: 0, ..settings }
-            );
-            assert_eq!(
-                result, Isomorphism::Unresolved,
-                "Wrong result for {} without a budget (flips {})", description, allow_flips
-            );
-        }
+        // Without a budget, the question cannot be settled.
+        let result = are_isomorphic(
+            first, second, &Options { search_budget: 0, ..settings }
+        );
+        assert_eq!(
+            result, Isomorphism::Unresolved,
+            "Wrong result for {} without a budget", description
+        );
     }
 }
 
@@ -402,13 +385,13 @@ fn search_finds_an_isomorphism_by_backtracking() {
         let permutation = random_permutation(graph.nodes(), &mut rng);
         let permuted = permute(&graph, &permutation, &no_flips(graph.nodes()));
 
-        let (result, statistics) = are_isomorphic_with_statistics(&graph, &permuted, &options(false));
+        let (result, statistics) = are_isomorphic_with_statistics(&graph, &permuted, &Options::default());
         let mapping = match result {
             Isomorphism::Isomorphic(mapping) => mapping,
             other => panic!("Expected an isomorphism for K(3,3) (seed {}), got {}", seed, other),
         };
         assert!(
-            is_isomorphism(&graph, &permuted, &mapping, false).is_ok(),
+            is_isomorphism(&graph, &permuted, &mapping).is_ok(),
             "The mapping for K(3,3) is not an isomorphism (seed {})", seed
         );
         assert!(
@@ -452,10 +435,10 @@ fn many_automorphisms_do_not_cause_backtracking() {
     let permutation = random_permutation(graph.nodes(), &mut rng);
     let permuted = permute(&graph, &permutation, &no_flips(graph.nodes()));
 
-    let (result, statistics) = are_isomorphic_with_statistics(&graph, &permuted, &options(false));
+    let (result, statistics) = are_isomorphic_with_statistics(&graph, &permuted, &Options::default());
     match result {
         Isomorphism::Isomorphic(mapping) => assert!(
-            is_isomorphism(&graph, &permuted, &mapping, false).is_ok(),
+            is_isomorphism(&graph, &permuted, &mapping).is_ok(),
             "The mapping for a bubble chain is not an isomorphism"
         ),
         other => panic!("Expected an isomorphism for a bubble chain, got {}", other),
@@ -482,20 +465,18 @@ fn identical_isolated_nodes_are_matched_directly() {
     let permutation = random_permutation(graph.nodes(), &mut rng);
     let permuted = permute(&graph, &permutation, &no_flips(graph.nodes()));
 
-    for allow_flips in [false, true] {
-        let (result, statistics) = are_isomorphic_with_statistics(&graph, &permuted, &options(allow_flips));
-        match result {
-            Isomorphism::Isomorphic(mapping) => assert!(
-                is_isomorphism(&graph, &permuted, &mapping, allow_flips).is_ok(),
-                "The mapping for isolated nodes is not an isomorphism (flips {})", allow_flips
-            ),
-            other => panic!("Expected an isomorphism for isolated nodes (flips {}), got {}", allow_flips, other),
-        }
-        assert_eq!(
-            statistics.individualizations, 0,
-            "Isolated nodes should not become choice points (flips {})", allow_flips
-        );
+    let (result, statistics) = are_isomorphic_with_statistics(&graph, &permuted, &Options::default());
+    match result {
+        Isomorphism::Isomorphic(mapping) => assert!(
+            is_isomorphism(&graph, &permuted, &mapping).is_ok(),
+            "The mapping for isolated nodes is not an isomorphism"
+        ),
+        other => panic!("Expected an isomorphism for isolated nodes, got {}", other),
     }
+    assert_eq!(
+        statistics.individualizations, 0,
+        "Isolated nodes should not become choice points"
+    );
 }
 
 #[test]
@@ -517,7 +498,7 @@ fn palindromic_components_find_the_flip() {
         let permutation = random_permutation(graph.nodes(), &mut rng);
         let flips = random_flips(graph.nodes(), &mut rng);
         let permuted = permute(&graph, &permutation, &flips);
-        check_isomorphic(&graph, &permuted, true, &format!("a palindromic path, seed {}", seed));
+        check_isomorphic(&graph, &permuted, &format!("a palindromic path, seed {}", seed));
     }
 }
 
@@ -541,7 +522,7 @@ fn disconnected_components_are_matched() {
 
         let permutation = random_permutation(graph.nodes(), &mut rng);
         let permuted = permute(&graph, &permutation, &no_flips(graph.nodes()));
-        check_isomorphic(&graph, &permuted, false, &format!("disconnected components, seed {}", seed));
+        check_isomorphic(&graph, &permuted, &format!("disconnected components, seed {}", seed));
     }
 }
 
@@ -561,32 +542,27 @@ fn realistic_graph() {
     let mut rng = StdRng::seed_from_u64(SEEDS[0]);
     let permutation = random_permutation(indexed.nodes(), &mut rng);
 
-    for allow_flips in [false, true] {
-        let flips = if allow_flips {
-            random_flips(indexed.nodes(), &mut rng)
-        } else {
-            no_flips(indexed.nodes())
-        };
+    for flips in [no_flips(indexed.nodes()), random_flips(indexed.nodes(), &mut rng)] {
         let permuted = permute(&indexed, &permutation, &flips);
 
         let (result, statistics) = are_isomorphic_with_statistics(
-            &topology, &permuted, &options(allow_flips)
+            &topology, &permuted, &Options::default()
         );
         let mapping = match result {
             Isomorphism::Isomorphic(mapping) => mapping,
-            other => panic!("Expected an isomorphism for micb-kir3dl1.gbz (flips {}), got {}", allow_flips, other),
+            other => panic!("Expected an isomorphism for micb-kir3dl1.gbz, got {}", other),
         };
         assert!(
-            is_isomorphism(&topology, &permuted, &mapping, allow_flips).is_ok(),
-            "The mapping for micb-kir3dl1.gbz is not an isomorphism (flips {})", allow_flips
+            is_isomorphism(&topology, &permuted, &mapping).is_ok(),
+            "The mapping for micb-kir3dl1.gbz is not an isomorphism"
         );
         assert_eq!(
             statistics.individualizations, 0,
-            "The search should not have been needed for micb-kir3dl1.gbz (flips {})", allow_flips
+            "The search should not have been needed for micb-kir3dl1.gbz"
         );
         assert_eq!(
             mapping, mapping_of(&permutation, &flips),
-            "Wrong mapping for micb-kir3dl1.gbz (flips {})", allow_flips
+            "Wrong mapping for micb-kir3dl1.gbz"
         );
     }
 }
@@ -613,7 +589,7 @@ fn large_graph() {
     let flips = random_flips(graph.nodes(), &mut rng);
     let permuted = permute(&graph, &permutation, &flips);
 
-    let (result, statistics) = are_isomorphic_with_statistics(&graph, &permuted, &options(true));
+    let (result, statistics) = are_isomorphic_with_statistics(&graph, &permuted, &Options::default());
     assert!(result.is_isomorphic(), "Expected an isomorphism for a large graph, got {}", result);
     assert_eq!(statistics.individualizations, 0, "The search should not have been needed");
 }
@@ -625,20 +601,20 @@ fn large_graph() {
 // Checks that the graphs are equivalent at the level of maximal non-branching paths, and that the
 // translation survives the independent checker.
 fn check_equivalent<A: Topology, B: Topology>(
-    first: &A, second: &B, allow_flips: bool, context: &str
+    first: &A, second: &B, context: &str
 ) -> Translation {
-    let result = are_isomorphic_unitigs(first, second, &options(allow_flips))
+    let result = are_isomorphic_unitigs(first, second, &Options::default())
         .unwrap_or_else(|e| panic!("Failed to compare {}: {}", context, e));
     let translation = match result {
         UnitigIsomorphism::Isomorphic(translation) => translation,
         other => panic!("Expected an equivalence for {}, got {}", context, other),
     };
-    if let Err(error) = is_translation(first, second, &translation, allow_flips) {
+    if let Err(error) = is_translation(first, second, &translation) {
         panic!("The translation for {} is not valid: {}", context, error);
     }
 
     // The stated semantics: the graphs are isomorphic once every node is broken into 1 bp pieces.
-    let result = are_isomorphic(&chop(first, 1), &chop(second, 1), &options(allow_flips));
+    let result = are_isomorphic(&chop(first, 1), &chop(second, 1), &Options::default());
     assert!(
         result.is_isomorphic(),
         "The 1 bp graphs of {} are not isomorphic: {}", context, result
@@ -653,17 +629,15 @@ fn chopping_is_invisible() {
         let mut rng = StdRng::seed_from_u64(seed);
         let graph = random_graph(25, 30, &mut rng);
         // Skip the graphs that contain a branch-free cycle.
-        if are_isomorphic_unitigs(&graph, &graph, &options(false)).is_err() {
+        if are_isomorphic_unitigs(&graph, &graph, &Options::default()).is_err() {
             continue;
         }
 
         for max_len in [1, 2, 3] {
             let chopped = chop(&graph, max_len);
             let context = format!("chopped at {}, seed {}", max_len, seed);
-            for allow_flips in [false, true] {
-                check_equivalent(&graph, &chopped, allow_flips, &context);
-                check_equivalent(&chopped, &graph, allow_flips, &context);
-            }
+            check_equivalent(&graph, &chopped, &context);
+            check_equivalent(&chopped, &graph, &context);
         }
     }
 }
@@ -673,7 +647,7 @@ fn chopping_and_permuting_is_invisible() {
     for &seed in SEEDS.iter() {
         let mut rng = StdRng::seed_from_u64(seed);
         let graph = random_graph(25, 30, &mut rng);
-        if are_isomorphic_unitigs(&graph, &graph, &options(false)).is_err() {
+        if are_isomorphic_unitigs(&graph, &graph, &Options::default()).is_err() {
             continue;
         }
 
@@ -681,7 +655,7 @@ fn chopping_and_permuting_is_invisible() {
         let permutation = random_permutation(chopped.nodes(), &mut rng);
         let flips = random_flips(chopped.nodes(), &mut rng);
         let permuted = permute(&chopped, &permutation, &flips);
-        check_equivalent(&graph, &permuted, true, &format!("chopped and permuted, seed {}", seed));
+        check_equivalent(&graph, &permuted, &format!("chopped and permuted, seed {}", seed));
     }
 }
 
@@ -690,22 +664,17 @@ fn node_isomorphic_graphs_translate_one_to_one() {
     for &seed in SEEDS.iter() {
         let mut rng = StdRng::seed_from_u64(seed);
         let graph = random_graph(25, 30, &mut rng);
-        if are_isomorphic_unitigs(&graph, &graph, &options(false)).is_err() {
+        if are_isomorphic_unitigs(&graph, &graph, &Options::default()).is_err() {
             continue;
         }
         let permutation = random_permutation(graph.nodes(), &mut rng);
         let permuted = permute(&graph, &permutation, &no_flips(graph.nodes()));
 
-        let translation = check_equivalent(&graph, &permuted, true, &format!("seed {}", seed));
-        // Neither graph splits a node of the other, so the pieces line up and the translation is a
-        // bijection. The exception is a unitig whose sequence is its own reverse complement: the
-        // two graphs may store it in opposite directions, and then the pieces line up in reverse.
-        if translation.is_forward() {
-            assert!(
-                translation.is_node_mapping(),
-                "The translation should be one to one (seed {})", seed
-            );
-        }
+        let translation = check_equivalent(&graph, &permuted, &format!("seed {}", seed));
+        // Neither graph splits a node of the other, so the two walks of a pair visit the same
+        // nodes. A unitig whose sequence is its own reverse complement may be stored in opposite
+        // directions, and the walks are then in the opposite order, but still of the same length.
+        check_walk_lengths(&translation, &format!("seed {}", seed));
     }
 
     // A path of distinct, non-palindromic sequences has no such ambiguity.
@@ -715,12 +684,19 @@ fn node_isomorphic_graphs_translate_one_to_one() {
         let permutation = random_permutation(graph.nodes(), &mut rng);
         let permuted = permute(&graph, &permutation, &no_flips(graph.nodes()));
 
-        let translation = check_equivalent(&graph, &permuted, false, &format!("a rigid graph, seed {}", seed));
-        assert!(
-            translation.is_node_mapping(),
-            "The translation for a rigid graph should be one to one (seed {})", seed
+        let translation = check_equivalent(&graph, &permuted, &format!("a rigid graph, seed {}", seed));
+        check_walk_lengths(&translation, &format!("a rigid graph, seed {}", seed));
+    }
+}
+
+// Checks that the two walks of every pair have the same number of nodes, which means that neither
+// graph splits a node of the other.
+fn check_walk_lengths(translation: &Translation, context: &str) {
+    for index in 0..translation.len() {
+        assert_eq!(
+            translation.first_walk(index).len(), translation.second_walk(index).len(),
+            "The walks of pair {} have different lengths for {}", index, context
         );
-        assert!(translation.is_forward(), "The translation for a rigid graph should be forward");
     }
 }
 
@@ -738,7 +714,7 @@ fn chopped_graphs_are_equivalent() {
 
     // The unused segment is a real difference, so the graphs are not equivalent.
     assert_eq!(
-        are_isomorphic_unitigs(&full, &from_gbz, &options(false)).unwrap(),
+        are_isomorphic_unitigs(&full, &from_gbz, &Options::default()).unwrap(),
         UnitigIsomorphism::NotIsomorphic(Mismatch::NodeCount),
         "translation.gfa and translation.gbz should differ"
     );
@@ -753,15 +729,24 @@ fn chopped_graphs_are_equivalent() {
     assert_eq!(from_gbz.nodes(), 9, "Wrong number of nodes in the GBZ graph");
 
     assert!(
-        !are_isomorphic(&trimmed, &from_gbz, &options(false)).is_isomorphic(),
+        !are_isomorphic(&trimmed, &from_gbz, &Options::default()).is_isomorphic(),
         "The chopped graph should not be isomorphic at the level of nodes"
     );
-    let translation = check_equivalent(&trimmed, &from_gbz, false, "translation.gfa vs translation.gbz");
+    let translation = check_equivalent(&trimmed, &from_gbz, "translation.gfa vs translation.gbz");
+    // The GBZ graph is chopped, so it needs at least as many nodes for every path, and strictly
+    // more for at least one of them.
     assert!(
-        !translation.is_node_mapping(),
+        (0..translation.len()).all(|index| {
+            translation.first_walk(index).len() <= translation.second_walk(index).len()
+        }),
+        "The chopped graph should not have fewer nodes on any path"
+    );
+    assert!(
+        (0..translation.len()).any(|index| {
+            translation.first_walk(index).len() < translation.second_walk(index).len()
+        }),
         "The translation should not be one to one, as the GBZ graph is chopped"
     );
-    assert!(translation.is_forward(), "The translation should not need flips");
 }
 
 #[test]
@@ -772,10 +757,10 @@ fn realistic_graph_is_equivalent_when_chopped() {
     let chopped = chop(&indexed, 1);
 
     assert!(
-        !are_isomorphic(&topology, &chopped, &options(false)).is_isomorphic(),
+        !are_isomorphic(&topology, &chopped, &Options::default()).is_isomorphic(),
         "The chopped graph should not be isomorphic at the level of nodes"
     );
-    check_equivalent(&topology, &chopped, false, "micb-kir3dl1.gbz chopped to 1 bp");
+    check_equivalent(&topology, &chopped, "micb-kir3dl1.gbz chopped to 1 bp");
 }
 
 //-----------------------------------------------------------------------------
@@ -802,13 +787,11 @@ fn unitig_isomorphism_detects_differences() {
         let other = gfa_text(text);
         // Chopping the modified graph must not hide the difference.
         for chopped in [other.clone(), chop(&other, 1)] {
-            for allow_flips in [false, true] {
-                let result = are_isomorphic_unitigs(&graph, &chopped, &options(allow_flips)).unwrap();
-                assert!(
-                    matches!(result, UnitigIsomorphism::NotIsomorphic(_)),
-                    "Expected a mismatch for {} (flips {}), got {}", description, allow_flips, result
-                );
-            }
+            let result = are_isomorphic_unitigs(&graph, &chopped, &Options::default()).unwrap();
+            assert!(
+                matches!(result, UnitigIsomorphism::NotIsomorphic(_)),
+                "Expected a mismatch for {}, got {}", description, result
+            );
         }
     }
 }
@@ -818,28 +801,23 @@ fn branch_free_cycles_are_reported() {
     let cycle = gfa_text("S\t1\tGAT\nS\t2\tTACA\nL\t1\t+\t2\t+\nL\t2\t+\t1\t+\n");
     let other = gfa_text(BASE);
     assert!(
-        are_isomorphic_unitigs(&cycle, &other, &options(false)).is_err(),
+        are_isomorphic_unitigs(&cycle, &other, &Options::default()).is_err(),
         "A branch-free cycle should be reported as an error"
     );
     assert!(
-        are_isomorphic_unitigs(&other, &cycle, &options(false)).is_err(),
+        are_isomorphic_unitigs(&other, &cycle, &Options::default()).is_err(),
         "A branch-free cycle should be reported as an error"
     );
 }
 
 #[test]
-fn reverse_complemented_graphs_need_flips() {
-    // A path whose nodes are all reverse complemented and reordered is the same pangenome only if
-    // flips are allowed.
+fn reverse_complemented_graphs_are_equivalent() {
+    // A path whose nodes are all reverse complemented and reordered is the same pangenome, because
+    // a node may map to the reverse complement of another node.
     let graph = gfa_text("S\t1\tGATT\nS\t2\tACA\nL\t1\t+\t2\t+\n");
     let flipped = gfa_text("S\t1\tTGT\nS\t2\tAATC\nL\t1\t+\t2\t+\n");
 
-    check_equivalent(&graph, &flipped, true, "a reverse complemented path");
-    let result = are_isomorphic_unitigs(&graph, &flipped, &options(false)).unwrap();
-    assert!(
-        !result.is_isomorphic(),
-        "The reverse complement should not be equivalent without flips, got {}", result
-    );
+    check_equivalent(&graph, &flipped, "a reverse complemented path");
 }
 
 //-----------------------------------------------------------------------------

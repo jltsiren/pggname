@@ -2,9 +2,8 @@
 //!
 //! Two graphs are isomorphic if one can be transformed into the other by renaming the nodes.
 //! More precisely, there must be a bijection between the nodes that preserves the sequences and the
-//! edges. If [`Options::allow_flips`] is set, a node may also map to the reverse complement of
-//! another node. Because flipping a node swaps its left and right sides, every edge endpoint at
-//! that node then changes orientation.
+//! edges. A node may also map to the reverse complement of another node. Because flipping a node
+//! swaps its left and right sides, every edge endpoint at that node then changes orientation.
 //!
 //! Note that [`stable_name`](crate::stable_name) depends on the node identifiers, while isomorphism
 //! does not. Two isomorphic graphs typically have different stable names.
@@ -54,17 +53,11 @@ pub const DEFAULT_SEARCH_BUDGET: usize = 1 << 20;
 /// ```
 /// use pggname::isomorphism::Options;
 ///
-/// let options = Options { allow_flips: true, ..Options::default() };
-/// assert!(options.allow_flips);
+/// let options = Options { refinement_rounds: 8, ..Options::default() };
+/// assert_eq!(options.refinement_rounds, 8);
 /// ```
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Options {
-    /// Allow mapping a node to the reverse complement of another node.
-    ///
-    /// When this is not set, isomorphism preserves orientations. In particular, the reverse
-    /// complement of a graph is then generally not isomorphic to the graph itself.
-    pub allow_flips: bool,
-
     /// Maximum number of color refinement rounds.
     ///
     /// Refinement stops early when the coloring becomes stable. More rounds make the search
@@ -81,7 +74,6 @@ pub struct Options {
 impl Default for Options {
     fn default() -> Self {
         Options {
-            allow_flips: false,
             refinement_rounds: DEFAULT_REFINEMENT_ROUNDS,
             search_budget: DEFAULT_SEARCH_BUDGET,
         }
@@ -328,7 +320,7 @@ pub fn are_isomorphic_with_statistics<A: Topology, B: Topology>(
     match outcome {
         Outcome::Complete => {
             let mapping = matcher.into_mapping();
-            match verify(first, second, &mapping, options) {
+            match verify(first, second, &mapping) {
                 Ok(()) => (Isomorphism::Isomorphic(mapping), statistics),
                 // Every pair passed the local checks, so this can only happen if the choices made
                 // along the way were wrong. Without choices, the mapping was the only candidate.
@@ -398,19 +390,11 @@ impl fmt::Display for UnitigIsomorphism {
 ///
 /// Two graphs that represent the same pangenome may still differ as graphs, because one of them
 /// has chopped long nodes into shorter fragments. Collapsing each maximal non-branching path into
-/// a single node removes the difference. A positive answer is a [`Translation`], which maps
-/// intervals of nodes rather than whole nodes, because the two graphs cut the paths differently.
+/// a single node removes the difference. A positive answer is a [`Translation`], which pairs paths
+/// of nodes rather than single nodes, because the two graphs cut the paths differently.
 ///
 /// Returns an error if either graph has a connected component that is a cycle with no branches.
 /// See [`crate::unitigs`] for why those are not supported.
-///
-/// # Orientation
-///
-/// A unitig whose sequence equals its own reverse complement can be stored in either direction, and
-/// the two graphs may choose differently. The comparison of the compacted graphs therefore always
-/// allows flips, and the resulting translation is verified against `options`. When `allow_flips` is
-/// not set and such a unitig exists, the result may be [`UnitigIsomorphism::Unresolved`] even
-/// though the graphs are equivalent.
 ///
 /// # Examples
 ///
@@ -441,10 +425,11 @@ impl fmt::Display for UnitigIsomorphism {
 ///
 /// // Node 1 of the first graph covers both nodes of the second.
 /// let translation = result.translation().unwrap();
-/// let parts = translation.parts(0);
-/// assert_eq!(parts.len(), 2);
-/// assert_eq!((parts[0].from, parts[0].node, parts[0].to, parts[0].len), (0, 0, 0, 4));
-/// assert_eq!((parts[1].from, parts[1].node, parts[1].to, parts[1].len), (4, 1, 0, 3));
+/// assert_eq!(translation.len(), 1);
+/// let first_walk: Vec<_> = translation.first_walk(0).collect();
+/// assert_eq!(first_walk, vec![(0, Orientation::Forward)]);
+/// let second_walk: Vec<_> = translation.second_walk(0).collect();
+/// assert_eq!(second_walk, vec![(0, Orientation::Forward), (1, Orientation::Forward)]);
 /// ```
 pub fn are_isomorphic_unitigs<A: Topology, B: Topology>(
     first: &A, second: &B, options: &Options
@@ -459,23 +444,17 @@ pub fn are_isomorphic_unitigs_with_statistics<A: Topology, B: Topology>(
     let first_unitigs = Unitigs::new(first)?;
     let second_unitigs = Unitigs::new(second)?;
 
-    // The direction of a unitig whose sequence is its own reverse complement is arbitrary, so the
-    // compacted graphs must be compared with flips allowed. For every other unitig, the canonical
-    // direction rules a flip out anyway: a flip would require the sequence to equal the reverse
-    // complement of another canonical sequence, which forces both to be their own reverse
-    // complements.
-    let unitig_options = Options { allow_flips: true, ..*options };
     let (result, statistics) = are_isomorphic_with_statistics(
-        first_unitigs.graph(), second_unitigs.graph(), &unitig_options
+        first_unitigs.graph(), second_unitigs.graph(), options
     );
 
     let result = match result {
         Isomorphism::Isomorphic(mapping) => {
             let translation = translation::expand(&first_unitigs, &second_unitigs, &mapping);
-            match translation::verify_translation(first, second, &translation, options) {
+            match translation::verify_translation(first, second, &translation) {
                 Ok(()) => UnitigIsomorphism::Isomorphic(translation),
-                // The translation reverses a unitig that the two graphs stored in opposite
-                // directions, which is not allowed here. Another choice might work.
+                // The isomorphism of the compacted graphs has already been verified, so this
+                // cannot happen. Report it as unresolved rather than claim an equivalence.
                 Err(_) => UnitigIsomorphism::Unresolved,
             }
         },
@@ -500,7 +479,7 @@ fn total_sequence_length<T: Topology>(graph: &T) -> usize {
 /// This runs in linear time and does not use any hash values, so it is an independent check of a
 /// mapping obtained by any means.
 pub fn verify<A: Topology, B: Topology>(
-    a: &A, b: &B, mapping: &NodeMapping, options: &Options
+    a: &A, b: &B, mapping: &NodeMapping
 ) -> Result<(), Mismatch> {
     if a.nodes() != b.nodes() || mapping.len() != a.nodes() {
         return Err(Mismatch::NodeCount);
@@ -524,12 +503,7 @@ pub fn verify<A: Topology, B: Topology>(
         let image = b.sequence(destination);
         let matches = match orientation {
             Orientation::Forward => sequence == image,
-            Orientation::Reverse => {
-                if !options.allow_flips {
-                    return Err(Mismatch::Structure);
-                }
-                hashing::reverse_complement(&sequence) == image.as_ref()
-            },
+            Orientation::Reverse => hashing::reverse_complement(&sequence) == image.as_ref(),
         };
         if !matches {
             return Err(Mismatch::Structure);
@@ -559,49 +533,40 @@ pub fn verify<A: Topology, B: Topology>(
     Ok(())
 }
 
-/// Writes the node mapping in TSV format.
+/// Writes the translation in TSV format.
 ///
-/// Each line has the name of a node in the first graph, the name of its image in the second graph,
-/// and the relative orientation as `+` or `-`. There is no header line.
-pub fn write_mapping<A: Topology, B: Topology, W: Write>(
-    first: &A, second: &B, mapping: &NodeMapping, writer: &mut W
+/// Each line has two walks separated by a tab: a maximal non-branching path in the first graph and
+/// the path in the second graph that spells the same sequence. A walk is written as a sequence of
+/// node names, each preceded by `>` for the forward orientation and `<` for the reverse, as in a
+/// GFA W-line. Each line is oriented so that the first node of the first walk is in forward
+/// orientation, when the walk allows it. There is no header line.
+///
+/// For example, `>1>2>3` and `<5<4` mean that nodes 1, 2, and 3 of the first graph, read in the
+/// forward orientation, spell the same sequence as nodes 5 and 4 of the second graph, read in the
+/// reverse orientation.
+pub fn write_translation<A: Topology, B: Topology, W: Write>(
+    first: &A, second: &B, translation: &Translation, writer: &mut W
 ) -> io::Result<()> {
-    for (source, destination, orientation) in mapping.iter() {
-        writer.write_all(&first.node_name(source))?;
+    for index in 0..translation.len() {
+        write_walk(first, translation.first_walk(index), writer)?;
         writer.write_all(b"\t")?;
-        writer.write_all(&second.node_name(destination))?;
-        writer.write_all(b"\t")?;
-        writer.write_all(match orientation {
-            Orientation::Forward => b"+",
-            Orientation::Reverse => b"-",
-        })?;
+        write_walk(second, translation.second_walk(index), writer)?;
         writer.write_all(b"\n")?;
     }
 
     Ok(())
 }
 
-/// Writes the translation in TSV format.
-///
-/// Each line has the name of a node in the first graph, the start of the interval in it, the length
-/// of the interval, the name of the corresponding node in the second graph, the start of the
-/// interval in it, and the relative orientation as `+` or `-`. There is no header line.
-pub fn write_translation<A: Topology, B: Topology, W: Write>(
-    first: &A, second: &B, translation: &Translation, writer: &mut W
+// Writes the walk as `>name` or `<name` for each node in it.
+fn write_walk<T: Topology, W: Write>(
+    graph: &T, walk: impl Iterator<Item = (usize, Orientation)>, writer: &mut W
 ) -> io::Result<()> {
-    for node in 0..translation.len() {
-        let name = first.node_name(node);
-        for part in translation.parts(node).iter() {
-            writer.write_all(&name)?;
-            write!(writer, "\t{}\t{}\t", part.from, part.len)?;
-            writer.write_all(&second.node_name(part.node))?;
-            write!(writer, "\t{}\t", part.to)?;
-            writer.write_all(match part.orientation {
-                Orientation::Forward => b"+",
-                Orientation::Reverse => b"-",
-            })?;
-            writer.write_all(b"\n")?;
-        }
+    for (node, orientation) in walk {
+        writer.write_all(match orientation {
+            Orientation::Forward => b">",
+            Orientation::Reverse => b"<",
+        })?;
+        writer.write_all(&graph.node_name(node))?;
     }
 
     Ok(())

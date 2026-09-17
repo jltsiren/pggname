@@ -145,9 +145,17 @@ Graphs that differ only in the identifiers therefore get different names, even t
 represent the same pangenome.
 The `--compare` option answers that question directly.
 
-Graphs A and B are isomorphic if there is a bijection between their nodes that preserves the
+Two graphs may also represent the same pangenome without being isomorphic as graphs, because one of
+them has chopped long nodes into shorter fragments.
+The comparison is therefore made at the level of maximal non-branching paths: each such path is
+collapsed into a single node before the comparison.
+Chopping a node only adds boundaries inside such a path, so the collapsed graphs are the same.
+This is the relationship the `translation` tag records: the graphs are isomorphic once every node is
+broken into 1 bp pieces.
+
+The collapsed graphs are isomorphic if there is a bijection between their nodes that preserves the
 sequences and the edges.
-With `--allow-flips`, a node may also map to the reverse complement of another node.
+A node may also map to the reverse complement of another node.
 Because flipping a node swaps its left and right sides, every edge endpoint at that node then
 changes orientation.
 
@@ -155,6 +163,11 @@ Note that the reverse complement of a sequence preserves case here, and characte
 map to themselves.
 This differs from the usual convention, but it makes the reverse complement its own inverse, which
 the canonical GFA format requires because it treats sequences as case sensitive.
+
+A unitig can be traversed from either end, and the direction has to be chosen the same way in both
+graphs.
+The only information that survives chopping is the sequence, so the unitig is stored in the
+direction where the sequence is lexicographically smaller.
 
 ### Command line
 
@@ -167,45 +180,46 @@ followed by the two file names.
 The reason for a negative answer is written to standard error.
 The exit code is 0 for isomorphic, 1 for not isomorphic, and 2 for unresolved.
 
-Use `--mapping FILE` to write the node mapping as tab-separated lines of node name in the first
-graph, node name in the second graph, and relative orientation as `+` or `-`.
-
 The `--integer-ids` and `--string-ids` options only choose how a GFA graph is stored in memory.
 They cannot change the answer, because isomorphism does not depend on the node identifiers.
 They may still determine whether the graph can be parsed at all.
 
-### Maximal non-branching paths
+### Translation
 
-Isomorphism as described above is determined at the level of nodes.
-A graph whose long nodes have been chopped into fragments is therefore not isomorphic to the
-original, even though the two represent the same pangenome.
+Use `--translation FILE` to write the correspondence between the two graphs.
+A positive answer is a translation rather than a bijection between nodes, because the two graphs cut
+the maximal non-branching paths in different places.
 
-With `--unitigs`, each maximal non-branching path is collapsed into a single node before the
-comparison.
-Chopping a node only adds boundaries inside such a path, so the collapsed graphs are the same.
-This is the relationship the `translation` tag records: the graphs are isomorphic once every node is
-broken into 1 bp pieces.
+Each line has two walks separated by a tab: a maximal non-branching path in the first graph and the
+path in the second graph that spells the same sequence.
+A walk is a sequence of node names, each preceded by `>` for the forward orientation and `<` for the
+reverse, as in a GFA W-line.
 
-A positive answer is then a translation rather than a mapping, because the two graphs cut the paths
-in different places.
-Each line of the `--mapping` file has a node name in the first graph, the start of an interval in
-it, the length of the interval, the corresponding node name in the second graph, the start of the
-interval in it, and the relative orientation.
+Here `trimmed.gfa` is `translation.gfa` without the segment that is not on any path, and
+`translation.gbz` is the same graph chopped to at most 2 bp.
 
 ```txt
-$ pggname --compare --unitigs translation.gfa translation.gbz
-s11	0	2	1	0	+
-s11	2	1	2	0	+
-s12	0	1	3	0	+
+$ pggname --compare --translation translation.tsv trimmed.gfa translation.gbz
+isomorphic      trimmed.gfa  translation.gbz
+$ cat translation.tsv
+>s11	>1>2
+>s12	>3
+>s13	>4
+>s14	>5>6
+>s15	>9
+>s16	>10
+>s17	>11
 ```
 
-Here the 3 bp node `s11` of the first graph covers the 2 bp node `1` and the 1 bp node `2` of the
-second, which was built by chopping the nodes to at most 2 bp.
+The 3 bp node `s11` of the first graph covers the 2 bp node `1` and the 1 bp node `2` of the second.
 
-A unitig can be traversed from either end, and the direction has to be chosen the same way in both
-graphs.
-The only information that survives chopping is the sequence, so the unitig is stored in the
-direction where the sequence is lexicographically smaller.
+Each line is oriented so that the first node of the first walk is in forward orientation, when the
+walk allows it.
+A walk that begins in reverse and ends in forward orientation begins in reverse from either end; it
+is left in the canonical direction of the path, where the sequence is lexicographically smaller.
+For example, `>1>2` and `<5<4` on the same line mean that nodes 1 and 2 of the first graph, read in
+the forward orientation, spell the same sequence as nodes 5 and 4 of the second graph, read in the
+reverse orientation.
 
 ### Limitations
 
@@ -218,15 +232,10 @@ A positive answer is always verified against the sequences and the edges, so it 
 A negative answer is given only when it follows from an exact invariant or from an exhaustive
 search.
 
-With `--unitigs`, there are two further limitations.
-
-* A unitig whose sequence equals its own reverse complement can be stored in either direction, and
-  the two graphs may choose differently.
-  Without `--allow-flips`, such a graph may be reported as `unresolved`.
-* A connected component that is a cycle with no branches has no unitig end to start from.
-  A canonical starting point would have to be defined by the minimal rotation of a circular
-  sequence, which may fall in the middle of a node.
-  Such components are reported as an error rather than handled incorrectly.
+A connected component that is a cycle with no branches has no unitig end to start from.
+A canonical starting point would have to be defined by the minimal rotation of a circular sequence,
+which may fall in the middle of a node.
+Such components are reported as an error rather than handled incorrectly.
 
 ## Notes
 

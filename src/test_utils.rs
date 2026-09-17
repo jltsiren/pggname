@@ -196,61 +196,69 @@ pub fn mapping_of(permutation: &[usize], flips: &[bool]) -> NodeMapping {
 
 /// Checks that the translation is a correspondence between the two graphs.
 ///
-/// This rebuilds the sequences of the first graph from the parts and marks the covered positions of
-/// the second graph, which is a different formulation from `verify_translation`.
+/// This spells out the sequence of each walk and counts the visits to each node, which is a
+/// different formulation from `verify_translation`.
 pub fn is_translation<A: Topology, B: Topology>(
-    first: &A, second: &B, translation: &Translation, allow_flips: bool
+    first: &A, second: &B, translation: &Translation
 ) -> Result<(), String> {
-    if translation.len() != first.nodes() {
-        return Err(format!("The translation covers {} of {} nodes", translation.len(), first.nodes()));
-    }
+    let mut first_visits = vec![0; first.nodes()];
+    let mut second_visits = vec![0; second.nodes()];
 
-    // Every node of the first graph must be the concatenation of the parts covering it.
-    for node in 0..first.nodes() {
-        let mut rebuilt: Vec<u8> = Vec::new();
-        for part in translation.parts(node).iter() {
-            if part.orientation == Orientation::Reverse && !allow_flips {
-                return Err(format!("Part of node {} is flipped, but flips are not allowed", node));
-            }
-            let image = second.sequence(part.node);
-            if part.to + part.len > image.len() {
-                return Err(format!("Part of node {} points outside node {}", node, part.node));
-            }
-            let slice = &image[part.to..part.to + part.len];
-            match part.orientation {
-                Orientation::Forward => rebuilt.extend_from_slice(slice),
-                Orientation::Reverse => rebuilt.extend(hashing::reverse_complement(slice)),
-            }
-        }
-        if rebuilt != first.sequence(node).to_vec() {
-            return Err(format!("The parts of node {} do not rebuild its sequence", node));
+    for index in 0..translation.len() {
+        // The two walks must spell the same sequence.
+        let here = spell(first, translation.first_walk(index), &mut first_visits)?;
+        let there = spell(second, translation.second_walk(index), &mut second_visits)?;
+        if here != there {
+            return Err(format!(
+                "The walks of pair {} spell different sequences: {} and {}",
+                index, String::from_utf8_lossy(&here), String::from_utf8_lossy(&there)
+            ));
         }
     }
 
-    // Every position of the second graph must be covered exactly once.
-    let mut covered: Vec<Vec<bool>> = (0..second.nodes())
-        .map(|node| vec![false; second.sequence_len(node)])
-        .collect();
-    for node in 0..first.nodes() {
-        for part in translation.parts(node).iter() {
-            let range = part.to..part.to + part.len;
-            for (index, flag) in covered[part.node][range].iter_mut().enumerate() {
-                if *flag {
-                    return Err(format!(
-                        "Offset {} of node {} is covered twice", part.to + index, part.node
-                    ));
-                }
-                *flag = true;
-            }
+    // Every node of both graphs must be visited exactly once.
+    for (node, &visits) in first_visits.iter().enumerate() {
+        if visits != 1 {
+            return Err(format!("Node {} of the first graph is visited {} times", node, visits));
         }
     }
-    for (node, positions) in covered.iter().enumerate() {
-        if let Some(offset) = positions.iter().position(|&value| !value) {
-            return Err(format!("Offset {} of node {} is not covered", offset, node));
+    for (node, &visits) in second_visits.iter().enumerate() {
+        if visits != 1 {
+            return Err(format!("Node {} of the second graph is visited {} times", node, visits));
         }
     }
 
     Ok(())
+}
+
+// Returns the sequence spelled by the walk, checking that it is a path and counting the visits.
+fn spell<T: Topology>(
+    graph: &T, walk: impl Iterator<Item = (usize, Orientation)>, visits: &mut [usize]
+) -> Result<Vec<u8>, String> {
+    let mut result: Vec<u8> = Vec::new();
+    let mut previous: Option<(usize, Orientation)> = None;
+
+    for (node, orientation) in walk {
+        if node >= visits.len() {
+            return Err(format!("The walk visits node {}, which does not exist", node));
+        }
+        visits[node] += 1;
+        if let Some((from, from_orientation)) = previous {
+            let exists = graph.neighbors(from, support::exit_side(from_orientation))
+                .any(|(next, side)| next == node && side == support::entry_side(orientation));
+            if !exists {
+                return Err(format!("There is no edge from node {} to node {}", from, node));
+            }
+        }
+        let sequence = graph.sequence(node);
+        match orientation {
+            Orientation::Forward => result.extend_from_slice(&sequence),
+            Orientation::Reverse => result.extend(hashing::reverse_complement(&sequence)),
+        }
+        previous = Some((node, orientation));
+    }
+
+    Ok(result)
 }
 
 //-----------------------------------------------------------------------------
@@ -260,7 +268,7 @@ pub fn is_translation<A: Topology, B: Topology>(
 /// This is written independently of `isomorphism::verify`, so that a bug in the production
 /// verification cannot hide itself.
 pub fn is_isomorphism<A: Topology, B: Topology>(
-    first: &A, second: &B, mapping: &NodeMapping, allow_flips: bool
+    first: &A, second: &B, mapping: &NodeMapping
 ) -> Result<(), String> {
     if first.nodes() != second.nodes() {
         return Err(format!("Node counts {} and {} differ", first.nodes(), second.nodes()));
@@ -282,10 +290,6 @@ pub fn is_isomorphism<A: Topology, B: Topology>(
     }
 
     for (source, destination, orientation) in mapping.iter() {
-        if orientation == Orientation::Reverse && !allow_flips {
-            return Err(format!("Node {} is flipped, but flips are not allowed", source));
-        }
-
         let sequence = first.sequence(source).to_vec();
         let expected = match orientation {
             Orientation::Forward => sequence,
