@@ -49,7 +49,7 @@ impl Config {
         );
 
         let mut opts = Options::new();
-        opts.optflag("n", "store-name", "overwrite names and relationships in GBZ tags");
+        opts.optflag("s", "store-name", "overwrite names and relationships in GBZ tags");
         opts.optflag("c", "compare", "determine whether two graphs are isomorphic (not with -n)");
         opts.optopt("t", "translation", "write the translation between the graphs to FILE (with -c)", "FILE");
         let matches = opts.parse(&args[1..]).map_err(|e| e.to_string())?;
@@ -60,14 +60,14 @@ impl Config {
             eprintln!("{}", opts.usage(&header));
             process::exit(1);
         };
-        let store_name = matches.opt_present("n");
+        let store_name = matches.opt_present("s");
         let compare = matches.opt_present("c");
         let translation_file = matches.opt_str("t");
 
         if compare {
             // Storing a name is a property of a single graph.
             if store_name {
-                return Err(String::from("Option -n cannot be used with -c"));
+                return Err(String::from("Option -s cannot be used with -c"));
             }
             if input_files.len() != 2 {
                 return Err(format!("Option -c requires two graphs, but {} were given", input_files.len()));
