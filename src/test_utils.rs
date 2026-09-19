@@ -184,6 +184,49 @@ pub fn chop<T: Topology>(source: &T, max_len: usize) -> IndexedGraph {
     result
 }
 
+/// Returns a subgraph of the given graph.
+///
+/// Each node is kept with probability `node_prob`, and each edge between two kept nodes with
+/// probability `edge_prob`. Node names and sequences are copied verbatim, unlike in [`permute`]
+/// and [`chop`], so the result is a subgraph in the sense of [`crate::topology::is_subgraph`].
+pub fn random_subgraph<T: Topology>(
+    source: &T, node_prob: f64, edge_prob: f64, rng: &mut impl Rng
+) -> IndexedGraph {
+    let mut result = IndexedGraph::new();
+    let mut index = vec![usize::MAX; source.nodes()];
+    for (node, target) in index.iter_mut().enumerate() {
+        if rng.random_bool(node_prob) {
+            *target = result.add_node(&source.node_name(node), &source.sequence(node));
+        }
+    }
+
+    for node in 0..source.nodes() {
+        if index[node] == usize::MAX {
+            continue;
+        }
+        for side in [NodeSide::Left, NodeSide::Right] {
+            for (neighbor, neighbor_side) in source.neighbors(node, side) {
+                if index[neighbor] == usize::MAX {
+                    continue;
+                }
+                // Consider each edge once, as `IndexedGraph::from_topology` does. Otherwise the
+                // two endpoints would make independent decisions about keeping it.
+                let from = support::encode_node_side(node, side);
+                let to = support::encode_node_side(neighbor, neighbor_side);
+                if from <= to && rng.random_bool(edge_prob) {
+                    result.add_edge(
+                        index[node], support::exit_orientation(side),
+                        index[neighbor], support::entry_orientation(neighbor_side)
+                    );
+                }
+            }
+        }
+    }
+    result.finalize();
+
+    result
+}
+
 //-----------------------------------------------------------------------------
 
 /// Returns the mapping induced by a permutation and a vector of flips.

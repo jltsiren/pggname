@@ -45,6 +45,9 @@ pub fn parse_gfa<G: Graph, R: BufRead>(reader: R) -> Result<G, String> {
         if line.is_empty() {
             continue;
         }
+        // TODO: Parse `H` lines. A GFA graph may store its name and its relationships to other
+        // graphs in the `NM`, `SG`, and `TL` fields, which `GraphName::from_header_lines` can
+        // parse. That needs the header lines returned alongside the graph.
         if line[0] == b'S' {
             let fields: Vec<&[u8]> = line.split(|&c| c == b'\t').collect();
             if fields.len() < 3 {

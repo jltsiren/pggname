@@ -10,6 +10,10 @@
 //! Because the reverse edge `(w, flip(o2)) -> (v, flip(o1))` yields the same unordered pair of
 //! sides, a bidirected edge is exactly an undirected edge over node sides.
 //!
+//! The module also provides [`is_subgraph`], which tests whether all nodes and edges of one graph
+//! are present in another. Unlike the questions in [`crate::isomorphism`], that relationship
+//! depends on the node identifiers.
+//!
 //! Nodes are identified by dense indexes in `0..nodes()`. Node identifiers in the original graph
 //! may be sparse, and mapping between the two is the responsibility of the view, not of the
 //! algorithms using it.
@@ -27,6 +31,7 @@ use simple_sds::bit_vector::BitVector;
 use simple_sds::ops::{Rank, Select};
 
 use std::borrow::Cow;
+use std::collections::HashMap;
 
 #[cfg(test)]
 mod tests;
@@ -104,6 +109,102 @@ pub trait Topology {
         }
         (self.nodes(), self.edges(), seq_len)
     }
+}
+
+//-----------------------------------------------------------------------------
+
+/// Returns `true` if the first graph is a subgraph of the second graph.
+///
+/// Every node of the subgraph must be a node of the supergraph with the same name and the same
+/// sequence, and every edge of the subgraph must be an edge of the supergraph. This is containment
+/// of labeled graphs rather than a subgraph isomorphism test: the node names are compared as byte
+/// strings, so the two graphs must agree on the identifiers. Every graph is a subgraph of itself.
+///
+/// Note that [`crate::isomorphism`] answers the opposite question. Isomorphism does not depend on
+/// the node identifiers at all, while this relationship is all about them.
+///
+/// # Examples
+///
+/// ```
+/// use pggname::topology::{self, IndexedGraph};
+/// use gbz::Orientation;
+///
+/// let mut large = IndexedGraph::new();
+/// let a = large.add_node(b"1", b"GAT");
+/// let b = large.add_node(b"2", b"TA");
+/// large.add_edge(a, Orientation::Forward, b, Orientation::Forward);
+/// large.finalize();
+///
+/// // The same graph without node 2.
+/// let mut small = IndexedGraph::new();
+/// small.add_node(b"1", b"GAT");
+/// small.finalize();
+///
+/// assert!(topology::is_subgraph(&small, &large));
+/// assert!(!topology::is_subgraph(&large, &small));
+/// // Every graph is a subgraph of itself.
+/// assert!(topology::is_subgraph(&large, &large));
+/// ```
+pub fn is_subgraph<A: Topology, B: Topology>(subgraph: &A, supergraph: &B) -> bool {
+    if subgraph.nodes() > supergraph.nodes() || subgraph.edges() > supergraph.edges() {
+        return false;
+    }
+
+    // Index the names in the smaller graph and find the image of each node by scanning the larger
+    // one. Duplicate names in the subgraph leave some nodes without an image, which the counter
+    // catches.
+    let mut names: HashMap<Vec<u8>, usize> = HashMap::with_capacity(subgraph.nodes());
+    for node in 0..subgraph.nodes() {
+        names.insert(subgraph.node_name(node), node);
+    }
+    let mut image = vec![usize::MAX; subgraph.nodes()];
+    let mut matched = 0;
+    for node in 0..supergraph.nodes() {
+        if let Some(&source) = names.get(&supergraph.node_name(node))
+            && image[source] == usize::MAX {
+            image[source] = node;
+            matched += 1;
+        }
+    }
+    if matched != subgraph.nodes() {
+        return false;
+    }
+
+    for (node, &target) in image.iter().enumerate() {
+        if subgraph.sequence_len(node) != supergraph.sequence_len(target) {
+            return false;
+        }
+        if subgraph.sequence(node).as_ref() != supergraph.sequence(target).as_ref() {
+            return false;
+        }
+    }
+
+    // Visiting each side of each node covers every edge, because the neighbor lists are symmetric.
+    // A side self-loop needs no special case: it is listed once in both graphs, on the same side.
+    // The neighbor lists are sorted rather than scanned, as a hub node would make the scan
+    // quadratic. One buffer is reused for the whole call.
+    let mut buffer: Vec<(usize, NodeSide)> = Vec::new();
+    for node in 0..subgraph.nodes() {
+        for side in [NodeSide::Left, NodeSide::Right] {
+            let degree = subgraph.degree(node, side);
+            if degree == 0 {
+                continue;
+            }
+            if degree > supergraph.degree(image[node], side) {
+                return false;
+            }
+            buffer.clear();
+            buffer.extend(supergraph.neighbors(image[node], side));
+            buffer.sort_unstable();
+            for (neighbor, neighbor_side) in subgraph.neighbors(node, side) {
+                if buffer.binary_search(&(image[neighbor], neighbor_side)).is_err() {
+                    return false;
+                }
+            }
+        }
+    }
+
+    true
 }
 
 //-----------------------------------------------------------------------------

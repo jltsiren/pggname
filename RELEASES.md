@@ -7,7 +7,19 @@
   sees past chopped nodes. A node may map to the reverse complement of another node.
 * A positive answer is a translation that pairs each path in the first graph with the path in the
   second graph that spells the same sequence.
-* `pggname --compare` compares two graphs, with `--translation` for writing the translation.
+* Determines whether one graph is a subgraph of another. Unlike isomorphism, that relationship
+  depends on the node identifiers.
+* `pggname --compare` reports the strongest relationship it finds between two graphs: `same`,
+  `subgraph`, `supergraph`, `isomorphic`, `not isomorphic`, or `unresolved`. Use `--translation`
+  for writing the translation, which only an isomorphism has.
+  **Breaking:** the exit code for an error moved from 3 to 5, as 3 and 4 now mean subgraph and
+  supergraph.
+* `pggname --store-name` now works with `--compare` and stores the relationship in the GBZ tags of
+  both graphs.
+* `pggname --store-name` no longer erases the `subgraph` and `translation` tags, and rewrites the
+  file only if the tags would change.
+* New `pggname --recompute` for ignoring the name stored in the GBZ tags. Without it, a stored name
+  is printed as it is.
 * An identifier-independent graph name based on the same machinery is under consideration.
   It is not exposed yet, because color refinement cannot tell all graphs apart.
 * Removed `pggname --benchmark` and the options for choosing between integer and string node

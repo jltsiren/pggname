@@ -64,6 +64,24 @@ H	TL:Z:1f133f116e8dd98fc07a647a8954038c2bcf07a45759ba94718471fe34ed7a7c,e10f3b36
 
 Here we use `RN` (reference name) instead of `NM` (name).
 
+### Command line
+
+```txt
+pggname [options] graph1 [graph2 ...]
+```
+
+The name of each graph is written to standard output, followed by the file name.
+If a GBZ graph already stores its name in the tags, that name is printed instead of computing it.
+Use `--recompute` to ignore the stored name and compute the name from the graph.
+
+Use `--store-name` to write the name and the relationships to the GBZ tags.
+The file is rewritten only if the tags would change, and the relationships already stored in it are
+preserved.
+Note that the file is rewritten in place, so a failure during the write destroys the graph.
+
+Only GBZ graphs can store this information at the moment.
+GFA graphs may store it in header lines, but the parser does not read them yet.
+
 ## Canonical GFA format
 
 Sort the nodes by their identifiers.
@@ -142,7 +160,8 @@ implemented.
 Two graphs have the same name only if their node identifiers agree.
 Graphs that differ only in the identifiers therefore get different names, even though they
 represent the same pangenome.
-The `--compare` option answers that question directly.
+The `--compare` option answers that question directly, along with the other relationships two
+graphs may have.
 
 Two graphs may also represent the same pangenome without being isomorphic as graphs, because one of
 them has chopped long nodes into shorter fragments.
@@ -168,20 +187,59 @@ graphs.
 The only information that survives chopping is the sequence, so the unitig is stored in the
 direction where the sequence is lexicographically smaller.
 
+### Subgraphs
+
+Graph A is a subgraph of graph B, if all nodes and edges of A are also present in B.
+The node identifiers and the sequences must match as well, so this relationship depends on the
+identifiers, while isomorphism does not.
+The identifiers are compared as they appear in the canonical GFA representation, which means that
+integer identifiers are compared without leading zeros.
+
+If A is a subgraph of B, graph B can be used as a reference with reads aligned to A.
+This is the relationship the `subgraph` tag records.
+Note that this is containment of labeled graphs rather than subgraph isomorphism, which would be
+NP-hard.
+
 ### Command line
 
 ```txt
-pggname --compare graph1 graph2
+pggname --compare [options] graph1 graph2
 ```
 
-The verdict is written to standard output as `isomorphic`, `not isomorphic`, or `unresolved`,
-followed by the two file names.
-The reason for a negative answer is written to standard error.
-The exit code is 0 for isomorphic, 1 for not isomorphic, and 2 for unresolved.
+The relationships are tested in the following order, and the first one that holds is the answer:
+
+| Verdict | Relationship | Exit code |
+| ------- | ------------ | --------- |
+| `same` | The graphs have the same name. | 0 |
+| `subgraph` | The first graph is a subgraph of the second graph. | 3 |
+| `supergraph` | The second graph is a subgraph of the first graph. | 4 |
+| `isomorphic` | The graphs are isomorphic at the level of maximal non-branching paths. | 0 |
+| `not isomorphic` | None of the above. | 1 |
+| `unresolved` | The isomorphism could not be settled. | 2 |
+
+The verdict is written to standard output, followed by the two file names.
+The reason for a negative answer is written to standard error, as is everything else that is not
+the verdict.
+An error exits with code 5.
+
+A name stored in the GBZ tags is used as it is, unless `--recompute` is given.
+The names of GFA graphs are always computed, as the header lines are not parsed yet.
+
+With `--store-name`, the relationship is stored in the tags of the two graphs:
+
+* `subgraph` and `supergraph` update the subgraph only, as the supergraph learns nothing new about
+  itself.
+* `isomorphic` stores the translation in both directions in both graphs.
+* `same` and `isomorphic` also copy all relationships known to either graph to the other, as does
+  the subgraph in the first case.
+
+As in the naming mode, only GBZ graphs can be written, and only if the tags would change.
 
 ### Translation
 
 Use `--translation FILE` to write the correspondence between the two graphs.
+The file is written only for the `isomorphic` verdict, as the other verdicts are settled without
+computing a translation.
 A positive answer is a translation rather than a bijection between nodes, because the two graphs cut
 the maximal non-branching paths in different places.
 

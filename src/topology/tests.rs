@@ -3,8 +3,11 @@ use super::*;
 use crate::Graph;
 use crate::algorithms;
 use crate::graph::{GBZStr, GraphInt, GraphStr};
+use crate::test_utils::*;
 
 use gbz::GBZ;
+use rand::SeedableRng;
+use rand::rngs::StdRng;
 use simple_sds::serialize;
 
 use std::fs::OpenOptions;
@@ -195,6 +198,162 @@ fn empty_graph() {
     let graph = IndexedGraph::new();
     assert_eq!(graph.statistics(), (0, 0, 0), "Wrong statistics for an empty graph");
     assert_eq!(IndexedGraph::from_topology(&graph), graph, "Round trip changed the empty graph");
+}
+
+//-----------------------------------------------------------------------------
+
+fn indexed_from_text(text: &str) -> IndexedGraph {
+    IndexedGraph::from(&parse_gfa_text::<GraphStr>(text))
+}
+
+// A path of three nodes.
+const PATH: &str = "\
+S\t1\tGATT\n\
+S\t2\tACA\n\
+S\t3\tTTAG\n\
+L\t1\t+\t2\t+\n\
+L\t2\t+\t3\t+\n";
+
+#[test]
+fn subgraph_identical() {
+    let graph = indexed_from_text(PATH);
+    let copy = indexed_from_text(PATH);
+    assert!(is_subgraph(&graph, &copy), "A graph is not a subgraph of its copy");
+    assert!(is_subgraph(&copy, &graph), "A copy is not a subgraph of the graph");
+    assert!(is_subgraph(&graph, &graph), "A graph is not a subgraph of itself");
+}
+
+#[test]
+fn subgraph_node_subset() {
+    let graph = indexed_from_text(PATH);
+    // The same graph without node 3 and the edge to it.
+    let subset = indexed_from_text("S\t1\tGATT\nS\t2\tACA\nL\t1\t+\t2\t+\n");
+    assert!(is_subgraph(&subset, &graph), "A node subset is not a subgraph");
+    assert!(!is_subgraph(&graph, &subset), "A graph is a subgraph of a node subset");
+}
+
+#[test]
+fn subgraph_edge_subset() {
+    let graph = indexed_from_text(PATH);
+    // The same nodes, with one edge missing.
+    let subset = indexed_from_text("S\t1\tGATT\nS\t2\tACA\nS\t3\tTTAG\nL\t1\t+\t2\t+\n");
+    assert!(is_subgraph(&subset, &graph), "An edge subset is not a subgraph");
+    assert!(!is_subgraph(&graph, &subset), "A graph is a subgraph of an edge subset");
+}
+
+#[test]
+fn subgraph_different_labels() {
+    let graph = indexed_from_text(PATH);
+
+    // A different sequence for node 2.
+    let sequence = indexed_from_text("S\t1\tGATT\nS\t2\tACC\nL\t1\t+\t2\t+\n");
+    assert!(!is_subgraph(&sequence, &graph), "A different sequence is a subgraph");
+
+    // Node 2 renamed. The graph is the same, but the identifiers are not.
+    let renamed = indexed_from_text("S\t1\tGATT\nS\t4\tACA\nL\t1\t+\t4\t+\n");
+    assert!(!is_subgraph(&renamed, &graph), "A renamed node is a subgraph");
+}
+
+#[test]
+fn subgraph_self_loops() {
+    let graph = indexed_from_text(SELF_LOOPS);
+    // The same nodes with no edges at all.
+    let no_loops = indexed_from_text("S\t1\tGAT\nS\t2\tTA\nS\t3\tCAG\n");
+    assert!(is_subgraph(&no_loops, &graph), "A graph without the self-loops is not a subgraph");
+    assert!(!is_subgraph(&graph, &no_loops), "The self-loops are a subgraph of a graph without them");
+
+    // Each kind of self-loop on its own. A side self-loop is listed once, on one side only, so it
+    // is the case most likely to go wrong.
+    for line in ["L\t1\t+\t1\t+\n", "L\t2\t+\t2\t-\n", "L\t3\t-\t3\t+\n"] {
+        let text = format!("S\t1\tGAT\nS\t2\tTA\nS\t3\tCAG\n{}", line);
+        let single = indexed_from_text(&text);
+        assert!(is_subgraph(&single, &graph), "A graph with only {} is not a subgraph", line.trim());
+        assert!(!is_subgraph(&graph, &single), "All self-loops are a subgraph of {}", line.trim());
+    }
+}
+
+#[test]
+fn subgraph_duplicate_names() {
+    // `IndexedGraph` does not check the names, so a duplicate must not pass as two distinct nodes.
+    let mut duplicates = IndexedGraph::new();
+    duplicates.add_node(b"1", b"GAT");
+    duplicates.add_node(b"1", b"GAT");
+    duplicates.finalize();
+
+    let graph = indexed_from_text("S\t1\tGAT\nS\t2\tTA\n");
+    assert!(!is_subgraph(&duplicates, &graph), "Duplicate node names pass as distinct nodes");
+}
+
+#[test]
+fn subgraph_empty() {
+    let empty = IndexedGraph::new();
+    let graph = indexed_from_text(PATH);
+    assert!(is_subgraph(&empty, &graph), "An empty graph is not a subgraph");
+    assert!(is_subgraph(&empty, &empty), "An empty graph is not a subgraph of itself");
+    assert!(!is_subgraph(&graph, &empty), "A graph is a subgraph of an empty graph");
+}
+
+#[test]
+fn subgraph_hub() {
+    // A high-degree node, where a linear scan of the neighbor list would be quadratic.
+    let nodes = 200;
+    let mut graph = IndexedGraph::new();
+    let hub = graph.add_node(b"hub", b"GATTACA");
+    for node in 0..nodes {
+        let leaf = graph.add_node(format!("{}", node).as_bytes(), b"A");
+        graph.add_edge(hub, Orientation::Forward, leaf, Orientation::Forward);
+    }
+    graph.finalize();
+
+    let mut without_last = IndexedGraph::new();
+    let hub = without_last.add_node(b"hub", b"GATTACA");
+    for node in 0..nodes {
+        let leaf = without_last.add_node(format!("{}", node).as_bytes(), b"A");
+        if node + 1 < nodes {
+            without_last.add_edge(hub, Orientation::Forward, leaf, Orientation::Forward);
+        }
+    }
+    without_last.finalize();
+
+    assert_eq!(graph.degree(0, NodeSide::Right), nodes, "Wrong degree for the hub");
+    assert!(is_subgraph(&without_last, &graph), "The hub with one edge less is not a subgraph");
+    assert!(!is_subgraph(&graph, &without_last), "The hub is a subgraph of itself with one edge less");
+}
+
+#[test]
+fn subgraph_backends_agree() {
+    // The two implementations must format the node names the same way.
+    let from_gfa = IndexedGraph::from(&gfa_graph::<GraphInt>("example.gfa"));
+    let gbz = gbz_graph("example.gbz");
+    let from_gbz = GbzTopology::new(&gbz).unwrap();
+    assert!(is_subgraph(&from_gfa, &from_gbz), "The GFA graph is not a subgraph of the GBZ graph");
+    assert!(is_subgraph(&from_gbz, &from_gfa), "The GBZ graph is not a subgraph of the GFA graph");
+}
+
+#[test]
+fn subgraph_random() {
+    for &seed in SEEDS {
+        let mut rng = StdRng::seed_from_u64(seed);
+        let graph = random_graph(20, 30, &mut rng);
+        let subset = random_subgraph(&graph, 0.7, 0.8, &mut rng);
+        assert!(is_subgraph(&subset, &graph), "Not a subgraph with seed {}", seed);
+        if subset.nodes() < graph.nodes() || subset.edges() < graph.edges() {
+            assert!(!is_subgraph(&graph, &subset), "A proper subgraph is a supergraph with seed {}", seed);
+        }
+    }
+}
+
+#[test]
+fn subgraph_permuted() {
+    // Permuting renames the nodes, so the result is isomorphic but not a subgraph.
+    for &seed in SEEDS {
+        let mut rng = StdRng::seed_from_u64(seed);
+        let graph = random_graph(10, 15, &mut rng);
+        let permutation = random_permutation(graph.nodes(), &mut rng);
+        let permuted = permute(&graph, &permutation, &no_flips(graph.nodes()));
+        assert!(!is_subgraph(&permuted, &graph), "A permuted graph is a subgraph with seed {}", seed);
+        assert!(!is_subgraph(&graph, &permuted), "A graph is a subgraph of a permutation with seed {}", seed);
+    }
 }
 
 //-----------------------------------------------------------------------------
