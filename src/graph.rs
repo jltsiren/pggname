@@ -53,7 +53,7 @@ pub trait Graph {
     fn statistics(&self) -> (usize, usize, usize);
 
     /// Returns an iterator over serialized nodes in sorted order.
-    fn node_iter(&self) -> impl Iterator<Item=Vec<u8>>;
+    fn serialized_node_iter(&self) -> impl Iterator<Item=Vec<u8>>;
 }
 
 //-----------------------------------------------------------------------------
@@ -162,7 +162,7 @@ impl Graph for GraphInt {
         (self.nodes.len(), edge_count, seq_len)
     }
 
-    fn node_iter(&self) -> impl Iterator<Item=Vec<u8>> {
+    fn serialized_node_iter(&self) -> impl Iterator<Item=Vec<u8>> {
         self.nodes.iter().map(|(id, node)| node.serialize(*id))
     }
 }
@@ -259,20 +259,15 @@ impl Graph for GraphStr {
         (self.nodes.len(), edge_count, seq_len)
     }
 
-    fn node_iter(&self) -> impl Iterator<Item=Vec<u8>> {
+    fn serialized_node_iter(&self) -> impl Iterator<Item=Vec<u8>> {
         self.nodes.iter().map(|(name, node)| node.serialize(name))
     }
 }
 
 //-----------------------------------------------------------------------------
 
-/// A GBZ wrapper using integer identifiers for the nodes.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct GBZInt {
-    pub graph: GBZ,
-}
-
-impl Graph for GBZInt {
+// GBZ always uses integer identifiers.
+impl Graph for GBZ {
     fn new() -> Self {
         unimplemented!()
     }
@@ -290,30 +285,30 @@ impl Graph for GBZInt {
     }
 
     fn statistics(&self) -> (usize, usize, usize) {
-        let node_count = self.graph.nodes();
+        let node_count = self.nodes();
 
         let mut edge_count = 0;
         let mut seq_len = 0;
-        for source_id in self.graph.node_iter() {
+        for source_id in self.node_iter() {
             for source_o in [Orientation::Forward, Orientation::Reverse] {
-                for (dest_id, dest_o) in self.graph.successors(source_id, source_o).unwrap() {
+                for (dest_id, dest_o) in self.successors(source_id, source_o).unwrap() {
                     if support::edge_is_canonical((source_id, source_o), (dest_id, dest_o)) {
                         edge_count += 1;
                     }
                 }
             }
-            seq_len += self.graph.sequence_len(source_id).unwrap_or(0);
+            seq_len += self.sequence_len(source_id).unwrap_or(0);
         }
 
         (node_count, edge_count, seq_len)
     }
 
-    fn node_iter(&self) -> impl Iterator<Item=Vec<u8>> {
-        self.graph.node_iter().map(|id| {
-            let sequence = self.graph.sequence(id).unwrap_or(&[]);
+    fn serialized_node_iter(&self) -> impl Iterator<Item=Vec<u8>> {
+        self.node_iter().map(|id| {
+            let sequence = self.sequence(id).unwrap_or(&[]);
             let mut node = NodeInt::new(Some(sequence.to_vec()));
             for source_o in [Orientation::Forward, Orientation::Reverse] {
-                for (dest_id, dest_o) in self.graph.successors(id, source_o).unwrap() {
+                for (dest_id, dest_o) in self.successors(id, source_o).unwrap() {
                     if support::edge_is_canonical((id, source_o), (dest_id, dest_o)) {
                         node.edges.push((source_o, dest_id, dest_o));
                     }
@@ -321,71 +316,6 @@ impl Graph for GBZInt {
             }
             node.finalize();
             node.serialize(id)
-        })
-    }
-}
-
-//-----------------------------------------------------------------------------
-
-/// A GBZ wrapper using string names for the nodes.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct GBZStr {
-    pub graph: GBZ,
-}
-
-impl Graph for GBZStr {
-    fn new() -> Self {
-        unimplemented!()
-    }
-
-    fn add_node(&mut self, _: &[u8], _sequence: &[u8]) -> Result<(), String> {
-        unimplemented!()
-    }
-
-    fn add_edge(&mut self, _: &[u8], _: Orientation, _: &[u8], _: Orientation) -> Result<(), String> {
-        unimplemented!()
-    }
-
-    fn finalize(&mut self) -> Result<(), String> {
-        Ok(())
-    }
-
-    fn statistics(&self) -> (usize, usize, usize) {
-        let node_count = self.graph.nodes();
-
-        let mut edge_count = 0;
-        let mut seq_len = 0;
-        for source_id in self.graph.node_iter() {
-            for source_o in [Orientation::Forward, Orientation::Reverse] {
-                for (dest_id, dest_o) in self.graph.successors(source_id, source_o).unwrap() {
-                    if support::edge_is_canonical((source_id, source_o), (dest_id, dest_o)) {
-                        edge_count += 1;
-                    }
-                }
-            }
-            seq_len += self.graph.sequence_len(source_id).unwrap_or(0);
-        }
-
-        (node_count, edge_count, seq_len)
-    }
-
-    fn node_iter(&self) -> impl Iterator<Item=Vec<u8>> {
-        let mut ordered_nodes: Vec<(String, usize)> = self.graph.node_iter().map(|id| (id.to_string(), id)).collect();
-        ordered_nodes.sort_by(|a, b| a.0.cmp(&b.0));
-
-        ordered_nodes.into_iter().map(|(source_name, source_id)| {
-            let sequence = self.graph.sequence(source_id).unwrap_or(&[]);
-            let mut node = NodeStr::new(Some(sequence.to_vec()));
-            for source_o in [Orientation::Forward, Orientation::Reverse] {
-                for (dest_id, dest_o) in self.graph.successors(source_id, source_o).unwrap() {
-                    let dest_name = dest_id.to_string().as_bytes().to_vec();
-                    if GraphStr::edge_is_canonical(source_name.as_bytes(), source_o, &dest_name, dest_o) {
-                        node.edges.push((source_o, dest_name, dest_o));
-                    }
-                }
-            }
-            node.finalize();
-            node.serialize(source_name.as_bytes())
         })
     }
 }

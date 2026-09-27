@@ -5,41 +5,72 @@ use getopts::Options;
 use pggname::{Graph, Topology};
 use pggname::algorithms;
 use pggname::comparison::{self, Verdict};
-use pggname::graph::{GraphInt, GraphStr, GBZInt};
+use pggname::graph::{GraphInt, GraphStr};
 use pggname::isomorphism;
 use pggname::topology::{GbzTopology, IndexedGraph};
 
 use simple_sds::serialize;
 
-use std::fs::{self, File, OpenOptions};
+use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter, Write};
 use std::{env, process};
 
 //-----------------------------------------------------------------------------
 
-// Exit code for an error. The other codes come from `Verdict::exit_code`.
-const EXIT_ERROR: i32 = 5;
-
-fn main() {
-    let code = match run() {
-        Ok(code) => code,
-        Err(message) => {
-            eprintln!("{}", message);
-            EXIT_ERROR
-        },
-    };
-    process::exit(code);
-}
-
-// FIXME: This should always print the names of the graphs.
-// FIXME: If told to recompute, all existing name information should be discarded.
-fn run() -> Result<i32, String> {
+fn main() -> Result<(), String> {
     let config = Config::new()?;
     if config.compare {
         compare_mode(&config)
     } else {
-        hash_mode(&config).map(|_| 0)
+        hash_mode(&config)
     }
+}
+
+fn compare_mode(config: &Config) -> Result<(), String> {
+    // We could do this faster if the input files are the same, but naive comparison
+    // should be good enough.
+    let mut first = Input::load(&config.input_files[0], config)?;
+    print_graph_name(&first.name, &first.filename);
+    let mut second = Input::load(&config.input_files[1], config)?;
+    print_graph_name(&second.name, &second.filename);
+    let verdict = compare_inputs(&first, &second, config)?;
+
+    // FIXME: what should we actually print
+    // The verdict goes to stdout, and everything else to stderr.
+    println!("{:<14}  {}  {}", verdict.to_string(), first.filename, second.filename);
+    if let Verdict::NotIsomorphic(mismatch) = verdict {
+        eprintln!("The compacted graphs have {}.", mismatch);
+    }
+
+    if config.store_name {
+        comparison::update_relationships(verdict, &mut first.name, &mut second.name);
+        first.store()?;
+        second.store()?;
+    }
+
+    Ok(())
+}
+
+fn hash_mode(config: &Config) -> Result<(), String> {
+    for input_file in config.input_files.iter() {
+        if GBZ::is_gbz(input_file) {
+            let (mut graph, version) = read_gbz(input_file)?;
+            let (name, stored) = gbz_name(&graph, input_file, config)?;
+            print_graph_name(&name, input_file);
+            // Writing only on a change preserves the relationship tags, which `set_tags` would
+            // otherwise clear, and avoids serializing a large graph for nothing.
+            if config.store_name && name != stored {
+                name.set_tags(graph.tags_mut());
+                serialize::serialize_version_to(&graph, input_file, version)
+                    .map_err(|e| format!("Error saving GBZ file {}: {}", input_file, e))?;
+            }
+        } else {
+            let name = gfa_name(input_file)?;
+            print_graph_name(&name, input_file);
+        }
+    }
+
+    Ok(())
 }
 
 //-----------------------------------------------------------------------------
@@ -57,13 +88,13 @@ impl Config {
         let args: Vec<String> = env::args().collect();
         let program = args[0].clone();
         let header = format!(
-            "Usage: {} [options] graph1 [graph2 ...]\n       {} -c [options] graph1 graph2",
+            "Usage: {} [options] graph1 [graph2 ...]\n       {} --compare [options] graph1 graph2",
             program, program
         );
 
         let mut opts = Options::new();
         opts.optflag("s", "store-name", "store the name and the relationships in GBZ tags");
-        opts.optflag("r", "recompute", "recompute the name even if it is stored in GBZ tags");
+        opts.optflag("r", "recompute", "discard existing name information and recompute");
         opts.optflag("c", "compare", "determine the relationship between two graphs");
         opts.optopt("t", "translation", "write the translation to FILE (with -c)", "FILE");
         let matches = opts.parse(&args[1..]).map_err(|e| e.to_string())?;
@@ -72,7 +103,7 @@ impl Config {
             matches.free.clone()
         } else {
             eprintln!("{}", opts.usage(&header));
-            process::exit(EXIT_ERROR);
+            process::exit(1);
         };
         let store_name = matches.opt_present("s");
         let recompute = matches.opt_present("r");
@@ -81,10 +112,10 @@ impl Config {
 
         if compare {
             if input_files.len() != 2 {
-                return Err(format!("Option -c requires two graphs, but {} were given", input_files.len()));
+                return Err(String::from("Option --compare requires two graphs"));
             }
         } else if translation_file.is_some() {
-            return Err(String::from("Option -t can only be used with -c"));
+            return Err(String::from("Option --translation requires --compare"));
         }
 
         Ok(Config {
@@ -114,102 +145,66 @@ fn read_gbz(input_file: &str) -> Result<(GBZ, usize), String> {
     Ok((graph, version))
 }
 
-//-----------------------------------------------------------------------------
-
-// Returns the name information for the GBZ graph, along with the graph itself and the information
-// stored in the file.
-//
-// The name is recomputed if the file does not store one or if the user asked for it.
+// Returns (graph name, stored name), computing the name as needed.
+// If the name is (re)computed, all existing information will be discarded.
 fn gbz_name(
-    graph: GBZ, input_file: &str, config: &Config
-) -> Result<(GBZ, GraphName, GraphName), String> {
+    graph: &GBZ, input_file: &str, config: &Config
+) -> Result<(GraphName, GraphName), String> {
     let stored = GraphName::from_tags(graph.tags())
         .map_err(|e| format!("Error parsing the name tags in {}: {}", input_file, e))?;
     if stored.has_name() && !config.recompute {
-        return Ok((graph, stored.clone(), stored));
+        return Ok((stored.clone(), stored));
     }
-
-    // `GBZInt` owns the graph, so we move the graph in and take it back afterwards.
-    let wrapper = GBZInt { graph };
-    let hash = pggname::stable_name(&wrapper);
-    let graph = wrapper.graph;
-
-    let mut name = GraphName::new(hash);
-    if stored.has_name() && stored.name() != name.name() {
-        // The relationships are keyed by the name of the graph, so a graph that is not the one the
-        // tags describe cannot inherit them.
-        eprintln!(
-            "Warning: {} stores the name {}, but the graph is {}; discarding the stored relationships",
-            input_file, stored.name().unwrap(), name.name().unwrap()
-        );
-    } else {
-        name.add_relationships(&stored);
-    }
-
-    Ok((graph, name, stored))
+    let hash = pggname::stable_name(graph);
+    let name = GraphName::new(hash);
+    Ok((name, stored))
 }
 
-// Returns the stable name of the GFA graph.
-fn gfa_name(input_file: &str) -> Result<String, String> {
-    // TODO: The header lines may store the name; see `algorithms::parse_gfa`.
-    match read_gfa::<GraphInt>(input_file) {
-        Ok(graph) => Ok(pggname::stable_name(&graph)),
-        Err(_) => Ok(pggname::stable_name(&read_gfa::<GraphStr>(input_file)?)),
-    }
+// FIXME: Parse stored name from GFA headers and include it in the output.
+// Returns graph name, computing it as needed.
+// If the name is (re)computed, all existing information will be discarded.
+fn gfa_name(input_file: &str) -> Result<GraphName, String> {
+    let hash = match read_gfa::<GraphInt>(input_file) {
+        Ok(graph) => pggname::stable_name(&graph),
+        Err(_) => pggname::stable_name(&read_gfa::<GraphStr>(input_file)?),
+    };
+    let name = GraphName::new(hash);
+    Ok(name)
 }
 
-// Returns a topological view of the GFA graph and its stable name.
-//
-// The parsed graph is dropped, as the view has all the information the comparison needs.
-fn gfa_input(input_file: &str) -> Result<(IndexedGraph, String), String> {
-    // TODO: The header lines may store the name; see `algorithms::parse_gfa`.
+// FIXME: Parse stored name from GFA headers and include it in the output.
+// Returns (indexex graph, graph name).
+// If the name is (re)computed, all existing information will be discarded.
+fn gfa_input(input_file: &str) -> Result<(IndexedGraph, GraphName), String> {
     match read_gfa::<GraphInt>(input_file) {
-        Ok(graph) => Ok((IndexedGraph::from(&graph), pggname::stable_name(&graph))),
+        Ok(graph) => {
+            let hash = pggname::stable_name(&graph);
+            let name = GraphName::new(hash);
+            let graph = IndexedGraph::from(&graph);
+            Ok((graph, name))
+        },
         Err(_) => {
             let graph = read_gfa::<GraphStr>(input_file)?;
-            Ok((IndexedGraph::from(&graph), pggname::stable_name(&graph)))
+            let hash = pggname::stable_name(&graph);
+            let name = GraphName::new(hash);
+            let graph = IndexedGraph::from(&graph);
+            Ok((graph, name))
         },
     }
 }
 
-//-----------------------------------------------------------------------------
-
-fn hash_mode(config: &Config) -> Result<(), String> {
-    for input_file in config.input_files.iter() {
-        if GBZ::is_gbz(input_file) {
-            let (graph, version) = read_gbz(input_file)?;
-            let (mut graph, name, stored) = gbz_name(graph, input_file, config)?;
-            println!("{}  {}", name.name().unwrap(), input_file);
-            // Writing only on a change preserves the relationship tags, which `set_tags` would
-            // otherwise clear, and avoids serializing a large graph for nothing.
-            if config.store_name && name != stored {
-                name.set_tags(graph.tags_mut());
-                serialize::serialize_version_to(&graph, input_file, version)
-                    .map_err(|e| format!("Error saving GBZ file {}: {}", input_file, e))?;
-            }
-        } else {
-            let hash = gfa_name(input_file)?;
-            println!("{}  {}", hash, input_file);
-            if config.store_name {
-                eprintln!("Warning: cannot store the name in GFA file {}", input_file);
-            }
-        }
-    }
-
-    Ok(())
+// Prints graph name and file name to the standard output.
+fn print_graph_name(name: &GraphName, input_file: &str) {
+    println!("{}  {}", name.name().unwrap(), input_file);
 }
 
 //-----------------------------------------------------------------------------
 
-// A graph that has been read from a file.
-//
-// GBZ graphs are kept as they are, because the topological view borrows the adjacency information
-// instead of copying it. GFA graphs have to be indexed, as they store each edge at one endpoint
-// only.
-//
+// A graph that can be used as a source for `Topology`.
+// GBZ graphs need a separate `GbzTopology`, while an `IndexedGraph` implements `Topology` directly.
 // The variants differ a lot in size, but there are exactly two of these per run.
 #[allow(clippy::large_enum_variant)]
-enum Source {
+enum TopologySource {
     Gbz { graph: GBZ, version: usize },
     Gfa(IndexedGraph),
 }
@@ -217,111 +212,61 @@ enum Source {
 // An input graph with its name information.
 struct Input {
     filename: String,
-    source: Source,
-    // The name and the relationships, updated as the comparison finds new ones.
+    source: TopologySource,
+    // Actual graph name.
     name: GraphName,
-    // The name and the relationships as they were in the file.
+    // Graph name that was already stored in the graph.
     stored: GraphName,
 }
 
-fn load_input(input_file: &str, config: &Config) -> Result<Input, String> {
-    let filename = String::from(input_file);
-    if GBZ::is_gbz(input_file) {
-        let (graph, version) = read_gbz(input_file)?;
-        let (graph, name, stored) = gbz_name(graph, input_file, config)?;
-        Ok(Input { filename, source: Source::Gbz { graph, version }, name, stored })
-    } else {
-        let (graph, hash) = gfa_input(input_file)?;
-        Ok(Input {
-            filename,
-            source: Source::Gfa(graph),
-            name: GraphName::new(hash),
-            stored: GraphName::default(),
-        })
+impl Input {
+    fn load(input_file: &str, config: &Config) -> Result<Self, String> {
+        let filename = String::from(input_file);
+        if GBZ::is_gbz(input_file) {
+            let (graph, version) = read_gbz(input_file)?;
+            let (name, stored) = gbz_name(&graph, input_file, config)?;
+            Ok(Input { filename, source: TopologySource::Gbz { graph, version }, name, stored })
+        } else {
+            let (graph, name) = gfa_input(input_file)?;
+            Ok(Input {
+                filename,
+                source: TopologySource::Gfa(graph),
+                name,
+                stored: GraphName::default(),
+            })
+        }
     }
-}
 
-// Writes the name information to the file, if it has changed.
-//
-// Returns `true` if the file was written.
-fn store_name(input: &mut Input) -> Result<bool, String> {
-    if input.name == input.stored {
-        return Ok(false);
-    }
-    match &mut input.source {
-        Source::Gbz { graph, version } => {
-            input.name.set_tags(graph.tags_mut());
-            serialize::serialize_version_to(graph, &input.filename, *version)
-                .map_err(|e| format!("Error saving GBZ file {}: {}", input.filename, e))?;
-            Ok(true)
-        },
-        Source::Gfa(_) => {
-            eprintln!("Warning: cannot store the name in GFA file {}", input.filename);
-            Ok(false)
-        },
-    }
-}
-
-// Returns `true` if the two paths refer to the same file.
-fn same_file(first: &str, second: &str) -> bool {
-    match (fs::canonicalize(first), fs::canonicalize(second)) {
-        (Ok(first), Ok(second)) => first == second,
-        _ => false,
+    // Rewrites the graph with the updated name information, if it has changed and the graph format supports it.
+    fn store(&mut self) -> Result<(), String> {
+        if self.name == self.stored {
+            return Ok(());
+        }
+        match &mut self.source {
+            TopologySource::Gbz { graph, version } => {
+                self.name.set_tags(graph.tags_mut());
+                serialize::serialize_version_to(graph, &self.filename, *version)
+                    .map_err(|e| format!("Error saving GBZ file {}: {}", self.filename, e))
+            },
+            TopologySource::Gfa(_) => Ok(()),
+        }
     }
 }
 
 //-----------------------------------------------------------------------------
 
-// Returns the exit code; see `Verdict::exit_code`.
-fn compare_mode(config: &Config) -> Result<i32, String> {
-    let mut first = load_input(&config.input_files[0], config)?;
-    let mut second = load_input(&config.input_files[1], config)?;
-    let verdict = compare_inputs(&first, &second, config)?;
-
-    // The verdict goes to stdout, and everything else to stderr.
-    println!("{:<14}  {}  {}", verdict.to_string(), first.filename, second.filename);
-    if let Verdict::NotIsomorphic(mismatch) = verdict {
-        eprintln!("The compacted graphs have {}.", mismatch);
-    }
-    if verdict == Verdict::Same && !first.name.is_same(&second.name) {
-        eprintln!(
-            "Warning: the graphs are the same, but they are named {} and {}",
-            first.name.name().unwrap(), second.name.name().unwrap()
-        );
-    }
-
-    // The verdict has already been reported, so a failure here does not hide it.
-    if config.store_name {
-        comparison::update_relationships(verdict, &mut first.name, &mut second.name);
-        let both = !same_file(&first.filename, &second.filename);
-        let mut stored = store_name(&mut first)?;
-        // If the same file was given twice, the second write would be redundant.
-        if both {
-            stored |= store_name(&mut second)?;
-        }
-        if !stored {
-            eprintln!("Note: there was no new name information to store");
-        }
-    }
-
-    Ok(verdict.exit_code())
-}
-
 fn compare_inputs(first: &Input, second: &Input, config: &Config) -> Result<Verdict, String> {
-    // The node identifiers are the same in both representations, so the two only differ in how the
-    // graph is stored. The topological views live in this call, which keeps the borrows of the GBZ
-    // graphs short enough for the name information to be updated afterwards.
     match (&first.source, &second.source) {
-        (Source::Gbz { graph: a, .. }, Source::Gbz { graph: b, .. }) => {
+        (TopologySource::Gbz { graph: a, .. }, TopologySource::Gbz { graph: b, .. }) => {
             compare(&GbzTopology::new(a)?, &GbzTopology::new(b)?, &first.name, &second.name, config)
         },
-        (Source::Gbz { graph: a, .. }, Source::Gfa(b)) => {
+        (TopologySource::Gbz { graph: a, .. }, TopologySource::Gfa(b)) => {
             compare(&GbzTopology::new(a)?, b, &first.name, &second.name, config)
         },
-        (Source::Gfa(a), Source::Gbz { graph: b, .. }) => {
+        (TopologySource::Gfa(a), TopologySource::Gbz { graph: b, .. }) => {
             compare(a, &GbzTopology::new(b)?, &first.name, &second.name, config)
         },
-        (Source::Gfa(a), Source::Gfa(b)) => {
+        (TopologySource::Gfa(a), TopologySource::Gfa(b)) => {
             compare(a, b, &first.name, &second.name, config)
         },
     }
@@ -338,23 +283,18 @@ fn compare<A: Topology, B: Topology>(
     if let Some(filename) = &config.translation_file {
         match translation {
             Some(translation) => {
-                let mut writer = create_translation_file(filename)?;
+                let file = File::create(filename)
+                    .map_err(|e| format!("Error creating translation file {}: {}", filename, e))?;
+                let mut writer = BufWriter::new(file);
                 isomorphism::write_translation(first, second, &translation, &mut writer)
                     .and_then(|()| writer.flush())
                     .map_err(|e| format!("Error writing translation file {}: {}", filename, e))?;
             },
-            // Only an isomorphism has a translation; the other verdicts are settled without one.
-            None => eprintln!("Note: there was no translation to write for verdict {}", verdict),
+            None => (),
         }
     }
 
     Ok(verdict)
-}
-
-fn create_translation_file(filename: &str) -> Result<BufWriter<File>, String> {
-    let file = File::create(filename)
-        .map_err(|e| format!("Error creating translation file {}: {}", filename, e))?;
-    Ok(BufWriter::new(file))
 }
 
 //-----------------------------------------------------------------------------

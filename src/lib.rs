@@ -7,22 +7,7 @@
 //!
 //! The purpose of pggname is to identify only the graph itself.
 //! Hence the canonical GFA representation does not include other information, such as headers, haplotype paths, or metadata.
-//!
-//! Because the name depends on the node identifiers, graphs that differ only in the identifiers get
-//! different names.
-//! The [`isomorphism`] module answers the identifier-independent question: are two graphs the same
-//! graph, up to renaming the nodes?
-//! It builds on the [`topology`] module, which provides the structural view of a graph that the
-//! [`Graph`] trait, being oriented towards canonical serialization, cannot.
-//!
-//! The identifier-dependent question is [`topology::is_subgraph`]: are all nodes and edges of one
-//! graph present in the other, with the same identifiers and sequences?
-//! The [`comparison`] module combines the two into a single verdict on a pair of graphs.
-//!
-//! Two graphs may also represent the same pangenome without being isomorphic, because one of them
-//! has chopped long nodes into shorter fragments.
-//! The [`unitigs`] module collapses each maximal non-branching path into a single node, which
-//! removes the difference.
+//! There are also algorithms for determining whether two graphs are isomorphic or one of them is a subgraph of the other.
 
 pub mod algorithms;
 pub mod comparison;
