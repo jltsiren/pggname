@@ -36,11 +36,7 @@ fn compare_mode(config: &Config) -> Result<(), String> {
     let verdict = compare_inputs(&first, &second, config)?;
 
     // FIXME: what should we actually print
-    // The verdict goes to stdout, and everything else to stderr.
     println!("{:<14}  {}  {}", verdict.to_string(), first.filename, second.filename);
-    if let Verdict::NotIsomorphic(mismatch) = verdict {
-        eprintln!("The compacted graphs have {}.", mismatch);
-    }
 
     if config.store_name {
         comparison::update_relationships(verdict, &mut first.name, &mut second.name);

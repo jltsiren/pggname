@@ -1,13 +1,10 @@
-//! Determining and recording the relationship between two pangenome graphs.
+//! Relationships between pangenome graphs.
 //!
-//! Two graphs may be the same graph, one may be contained in the other, or they may represent the
-//! same pangenome with different node identifiers. [`compare`] tries these in order and returns
-//! the strongest relationship it finds as a [`Verdict`].
-//!
-//! The relationships are also the ones that [`GraphName`] can store in GBZ tags and GFA header
-//! lines. [`update_relationships`] records a verdict in the names of the two graphs.
+//! The relationship between two graphs implementing [`Topology`] can be determined using [`compare`].
+//! The result of a comparison is returned as a [`Verdict`].
+//! Given a comparison result, the [`GraphName`] objects can be updated with [`update_relationships`].
 
-use crate::isomorphism::{self, Mismatch, Options, UnitigIsomorphism};
+use crate::isomorphism::{self, Options, UnitigIsomorphism};
 use crate::isomorphism::translation::Translation;
 use crate::topology::{self, Topology};
 
@@ -21,40 +18,20 @@ mod tests;
 //-----------------------------------------------------------------------------
 
 /// The relationship between two graphs.
-///
-/// [`Verdict::Subgraph`] and [`Verdict::Supergraph`] are relative to the first graph.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Verdict {
-    /// The graphs are the same graph, with the same node identifiers.
+    /// Same graph.
     Same,
-    /// The first graph is a subgraph of the second graph.
+    /// The first graph is a proper subgraph of the second.
     Subgraph,
-    /// The second graph is a subgraph of the first graph.
+    /// The second graph is a proper subgraph of the first.
     Supergraph,
     /// The graphs are isomorphic at the level of maximal non-branching paths.
     Isomorphic,
-    /// The graphs are unrelated, for the given reason.
-    ///
-    /// The reason refers to the compacted graphs, where each node is a maximal non-branching path.
-    NotIsomorphic(Mismatch),
+    /// The graphs are unrelated.
+    Unrelated,
     /// The question could not be settled.
     Unresolved,
-}
-
-impl Verdict {
-    /// Returns the process exit code corresponding to the verdict.
-    ///
-    /// The graphs represent the same pangenome if and only if the code is 0.
-    pub fn exit_code(&self) -> i32 {
-        match self {
-            Verdict::Same => 0,
-            Verdict::Isomorphic => 0,
-            Verdict::NotIsomorphic(_) => 1,
-            Verdict::Unresolved => 2,
-            Verdict::Subgraph => 3,
-            Verdict::Supergraph => 4,
-        }
-    }
 }
 
 impl fmt::Display for Verdict {
@@ -64,7 +41,7 @@ impl fmt::Display for Verdict {
             Verdict::Subgraph => write!(f, "subgraph"),
             Verdict::Supergraph => write!(f, "supergraph"),
             Verdict::Isomorphic => write!(f, "isomorphic"),
-            Verdict::NotIsomorphic(_) => write!(f, "not isomorphic"),
+            Verdict::Unrelated => write!(f, "unrelated"),
             Verdict::Unresolved => write!(f, "unresolved"),
         }
     }
@@ -74,17 +51,21 @@ impl fmt::Display for Verdict {
 
 /// Determines the relationship between the two graphs.
 ///
-/// The checks are made in increasing order of cost, and the first one that succeeds gives the
-/// answer:
+/// The checks are made in increasing order of cost, and the first one that succeeds gives the answer:
 ///
-/// 1. The graphs have the same name.
+/// 1. Graph names are defined and the same.
 /// 2. One graph is a subgraph of the other (see [`topology::is_subgraph`]).
-/// 3. The graphs are isomorphic at the level of maximal non-branching paths (see
-///    [`isomorphism::are_isomorphic_unitigs`]).
+/// 3. The graphs are isomorphic at the level of maximal non-branching paths (see [`isomorphism::are_isomorphic_unitigs`]).
 ///
-/// A translation is returned only in case 3, as the other cases are answered without computing
-/// one. Returns an error if either graph has a connected component that is a cycle with no
-/// branches, as in [`isomorphism::are_isomorphic_unitigs`].
+/// If the graphs are isomorphic, a [`Translation`] between the unitigs will be returned.
+///
+/// # Arguments
+///
+/// * `first`: The first graph to compare.
+/// * `second`: The second graph to compare.
+/// * `first_name`: The name of the first graph (may be empty).
+/// * `second_name`: The name of the second graph (may be empty).
+/// * `options`: Options for the isomorphism comparison.
 ///
 /// # Examples
 ///
@@ -125,12 +106,13 @@ pub fn compare<A: Topology, B: Topology>(
     options: &Options
 ) -> Result<(Verdict, Option<Translation>), String> {
     if first_name.is_same(second_name) {
+        // NOTE: Here we assume that name collisions do not happen in practice.
+        // This should be true for the SHA-256 names used in the actual naming scheme.
         return Ok((Verdict::Same, None));
     }
 
     if topology::is_subgraph(first, second) {
-        // Mutual containment means the same canonical GFA and hence the same name. If the names
-        // say otherwise, at least one of them was stale, and the graphs win.
+        // With missing graph names, we may learn here that the graphs are the same.
         let same = first.nodes() == second.nodes() && first.edges() == second.edges();
         let verdict = if same { Verdict::Same } else { Verdict::Subgraph };
         return Ok((verdict, None));
@@ -139,24 +121,21 @@ pub fn compare<A: Topology, B: Topology>(
         return Ok((Verdict::Supergraph, None));
     }
 
-    let result = isomorphism::are_isomorphic_unitigs(first, second, options)?;
+    let result = isomorphism::are_isomorphic_unitigs(first, second, options)?; // FIXME: rename
     Ok(match result {
         UnitigIsomorphism::Isomorphic(translation) => (Verdict::Isomorphic, Some(translation)),
-        UnitigIsomorphism::NotIsomorphic(mismatch) => (Verdict::NotIsomorphic(mismatch), None),
+        UnitigIsomorphism::NotIsomorphic(_) => (Verdict::Unrelated, None), // FIXME: do we need the mismatch?
         UnitigIsomorphism::Unresolved => (Verdict::Unresolved, None),
     })
 }
 
 //-----------------------------------------------------------------------------
 
-/// Records the relationship between the two graphs in their names.
+/// Updates the relationships between the two graphs.
 ///
-/// [`Verdict::Subgraph`] and [`Verdict::Supergraph`] update the name of the subgraph only, because
-/// the relationship is not symmetric and the supergraph knows nothing new. The other relationships
-/// are symmetric, and both names end up with the union of the relationships known to either.
-///
-/// Does nothing if the verdict is [`Verdict::NotIsomorphic`] or [`Verdict::Unresolved`], or if
-/// either graph has no name.
+/// Does nothing if either graph has no name.
+/// If the relationship is symmetric ([`Verdict::Same`] or [`Verdict::Isomorphic`]), copies existing relationships in both directions.
+/// For asymmetric relationships ([`Verdict::Subgraph`] and [`Verdict::Supergraph`]), the name of the parent graph remains unchanged.
 ///
 /// # Examples
 ///
@@ -164,34 +143,34 @@ pub fn compare<A: Topology, B: Topology>(
 /// use pggname::comparison::{self, Verdict};
 /// use gbz::GraphName;
 ///
-/// let mut first = GraphName::new(String::from("first"));
-/// let mut second = GraphName::new(String::from("second"));
-/// comparison::update_relationships(Verdict::Subgraph, &mut first, &mut second);
+/// let mut subgraph = GraphName::new(String::from("first"));
+/// let mut supergraph = GraphName::new(String::from("second"));
+/// comparison::update_relationships(Verdict::Subgraph, &mut subgraph, &mut supergraph);
+/// assert!(subgraph.is_subgraph_of(&supergraph));
 ///
-/// assert!(first.is_subgraph_of(&second));
-/// let relationships: Vec<(&str, &str)> = first.subgraph_iter().collect();
-/// assert_eq!(relationships, vec![("first", "second")]);
-/// // The supergraph is left alone.
-/// assert_eq!(second, GraphName::new(String::from("second")));
+/// // Supergraph name remains unchanged.
+/// let copy = GraphName::new(String::from("second"));
+/// assert_eq!(supergraph, copy);
 /// ```
 pub fn update_relationships(verdict: Verdict, first: &mut GraphName, second: &mut GraphName) {
+    if !first.has_name() || !second.has_name() {
+        return;
+    }
+
     match verdict {
-        // The order matters: the second call copies the already merged relationships back.
         Verdict::Same => {
             first.add_relationships(second);
             second.add_relationships(first);
         },
         Verdict::Subgraph => first.make_subgraph_of(second),
         Verdict::Supergraph => second.make_subgraph_of(first),
-        // The order matters here as well. The second call must see the updated `first`, so that
-        // `second` learns about the forward translation, and the third call must come last, so
-        // that `first` learns about the reverse translation. Two calls cannot do this.
         Verdict::Isomorphic => {
             first.add_translation_to(second);
             second.add_translation_to(first);
+            // We still need to copy the translation relationship from `first` to `second`.
             first.add_relationships(second);
         },
-        Verdict::NotIsomorphic(_) => (),
+        Verdict::Unrelated => (),
         Verdict::Unresolved => (),
     }
 }

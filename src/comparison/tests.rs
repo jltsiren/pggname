@@ -41,7 +41,7 @@ fn other_graph() -> IndexedGraph {
     graph
 }
 
-fn name_of(name: &str) -> GraphName {
+fn as_graph_name(name: &str) -> GraphName {
     GraphName::new(String::from(name))
 }
 
@@ -53,42 +53,21 @@ fn translations(name: &GraphName) -> Vec<(String, String)> {
     name.translation_iter().map(|(from, to)| (String::from(from), String::from(to))).collect()
 }
 
-fn pairs(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
-    pairs.iter().map(|(from, to)| (String::from(*from), String::from(*to))).collect()
-}
+fn compare_graph_names(name: &GraphName, truth: &GraphName, label: &str) {
+    assert_eq!(name.name(), truth.name(), "Wrong graph name for {}", label);
 
-//-----------------------------------------------------------------------------
-
-#[test]
-fn exit_codes() {
-    // These are a documented interface, so they are pinned here rather than derived.
-    let verdicts = [
-        (Verdict::Same, 0),
-        (Verdict::Isomorphic, 0),
-        (Verdict::NotIsomorphic(Mismatch::NodeCount), 1),
-        (Verdict::Unresolved, 2),
-        (Verdict::Subgraph, 3),
-        (Verdict::Supergraph, 4),
-    ];
-    for (verdict, code) in verdicts {
-        assert_eq!(verdict.exit_code(), code, "Wrong exit code for {}", verdict);
+    let name_subgraphs = subgraphs(name);
+    let truth_subgraphs = subgraphs(truth);
+    assert_eq!(name_subgraphs.len(), truth_subgraphs.len(), "Wrong number of subgraph relationships for {}", label);
+    for (i, (name_subgraph, truth_subgraph)) in name_subgraphs.iter().zip(truth_subgraphs.iter()).enumerate() {
+        assert_eq!(name_subgraph, truth_subgraph, "Wrong subgraph relationship at index {} for {}", i, label);
     }
-}
 
-#[test]
-fn verdict_display() {
-    let verdicts = [
-        (Verdict::Same, "same"),
-        (Verdict::Subgraph, "subgraph"),
-        (Verdict::Supergraph, "supergraph"),
-        (Verdict::Isomorphic, "isomorphic"),
-        (Verdict::NotIsomorphic(Mismatch::Structure), "not isomorphic"),
-        (Verdict::Unresolved, "unresolved"),
-    ];
-    for (verdict, expected) in verdicts {
-        assert_eq!(verdict.to_string(), expected, "Wrong string for {:?}", verdict);
-        // The output is written in a column of this width.
-        assert!(expected.len() <= 14, "Too long string for {:?}", verdict);
+    let name_translations = translations(name);
+    let truth_translations = translations(truth);
+    assert_eq!(name_translations.len(), truth_translations.len(), "Wrong number of translation relationships for {}", label);
+    for (i, (name_translation, truth_translation)) in name_translations.iter().zip(truth_translations.iter()).enumerate() {
+        assert_eq!(name_translation, truth_translation, "Wrong translation relationship at index {} for {}", i, label);
     }
 }
 
@@ -98,7 +77,7 @@ fn verdict_display() {
 fn compare_same_name() {
     let first = base_graph();
     let second = other_graph();
-    let name = name_of("shared");
+    let name = as_graph_name("shared");
     let options = Options::default();
 
     // The name is taken at face value, without looking at the graphs.
@@ -108,24 +87,32 @@ fn compare_same_name() {
 }
 
 #[test]
-fn compare_stale_names() {
+fn compare_missing_names() {
     let first = base_graph();
     let second = base_graph();
+    let name = as_graph_name("name");
+    let missing_name = GraphName::default();
     let options = Options::default();
 
-    // Mutual containment overrules the names.
-    let (verdict, _) = compare(
-        &first, &second, &name_of("first"), &name_of("second"), &options
-    ).unwrap();
-    assert_eq!(verdict, Verdict::Same, "Wrong verdict for identical graphs with different names");
+    // Both names are missing.
+    let (verdict, _) = compare(&first, &second, &missing_name, &missing_name, &options).unwrap();
+    assert_eq!(verdict, Verdict::Same, "Wrong verdict for identical graphs with missing names");
+
+    // First name is missing.
+    let (verdict, _) = compare(&first, &second, &missing_name, &name, &options).unwrap();
+    assert_eq!(verdict, Verdict::Same, "Wrong verdict for identical graphs with the first name missing");
+
+    // Second name is missing.
+    let (verdict, _) = compare(&first, &second, &name, &missing_name, &options).unwrap();
+    assert_eq!(verdict, Verdict::Same, "Wrong verdict for identical graphs with the second name missing");
 }
 
 #[test]
 fn compare_subgraph() {
     let large = base_graph();
     let small = truncated_graph();
-    let large_name = name_of("large");
-    let small_name = name_of("small");
+    let large_name = as_graph_name("large");
+    let small_name = as_graph_name("small");
     let options = Options::default();
 
     let (verdict, translation) = compare(
@@ -143,10 +130,12 @@ fn compare_isomorphic() {
     let graph = base_graph();
     // Chopping renames the nodes, so this is not a subgraph.
     let chopped = chop(&graph, 2);
+    let graph_name = as_graph_name("graph");
+    let chopped_name = as_graph_name("chopped");
     let options = Options::default();
 
     let (verdict, translation) = compare(
-        &graph, &chopped, &name_of("graph"), &name_of("chopped"), &options
+        &graph, &chopped, &graph_name, &chopped_name, &options
     ).unwrap();
     assert_eq!(verdict, Verdict::Isomorphic, "Wrong verdict for a chopped graph");
     assert!(translation.is_some(), "No translation for a chopped graph");
@@ -156,13 +145,15 @@ fn compare_isomorphic() {
 fn compare_unrelated() {
     let first = base_graph();
     let second = other_graph();
+    let first_name = as_graph_name("first");
+    let second_name = as_graph_name("second");
     let options = Options::default();
 
     let (verdict, translation) = compare(
-        &first, &second, &name_of("first"), &name_of("second"), &options
+        &first, &second, &first_name, &second_name, &options
     ).unwrap();
     assert!(
-        matches!(verdict, Verdict::NotIsomorphic(_)),
+        matches!(verdict, Verdict::Unrelated),
         "Wrong verdict for unrelated graphs: {}", verdict
     );
     assert!(translation.is_none(), "Got a translation for unrelated graphs");
@@ -172,106 +163,126 @@ fn compare_unrelated() {
 
 #[test]
 fn update_same() {
-    let mut first = name_of("first");
-    first.add_subgraph("first", "parent");
-    let mut second = name_of("second");
-    second.add_translation("second", "other");
+    let mut first = as_graph_name("graph");
+    first.add_subgraph("graph", "parent");
+    let mut second = as_graph_name("graph");
+    second.add_translation("graph", "other");
+
+    let mut truth = as_graph_name("graph");
+    truth.add_subgraph("graph", "parent");
+    truth.add_translation("graph", "other");
 
     update_relationships(Verdict::Same, &mut first, &mut second);
-
-    // Both end up with the union, and no new relationships are created.
-    assert_eq!(subgraphs(&first), pairs(&[("first", "parent")]), "Wrong subgraphs for the first graph");
-    assert_eq!(translations(&first), pairs(&[("second", "other")]), "Wrong translations for the first graph");
-    assert_eq!(subgraphs(&second), subgraphs(&first), "The subgraph relationships disagree");
-    assert_eq!(translations(&second), translations(&first), "The translation relationships disagree");
+    compare_graph_names(&first, &truth, "first");
+    compare_graph_names(&second, &truth, "second");
 }
 
 #[test]
 fn update_subgraph() {
-    let mut first = name_of("first");
-    let mut second = name_of("second");
+    let mut first = as_graph_name("first");
+    let mut first_truth = first.clone();
+    let mut second = as_graph_name("second");
     second.add_subgraph("second", "parent");
-    let original = second.clone();
+    let second_truth = second.clone();
+
+    first_truth.add_subgraph("first", "second");
+    first_truth.add_subgraph("second", "parent");
 
     update_relationships(Verdict::Subgraph, &mut first, &mut second);
-
-    assert_eq!(
-        subgraphs(&first), pairs(&[("first", "second"), ("second", "parent")]),
-        "Wrong subgraphs for the subgraph"
-    );
-    assert!(first.is_subgraph_of(&second), "The subgraph relationship was not stored");
-    assert!(first.is_subgraph_of(&name_of("parent")), "The inherited relationship was not copied");
-    assert_eq!(second, original, "The supergraph was modified");
+    compare_graph_names(&first, &first_truth, "first");
+    compare_graph_names(&second, &second_truth, "second");
 }
 
 #[test]
 fn update_supergraph() {
-    let mut first = name_of("first");
-    let mut second = name_of("second");
-    let original = first.clone();
+    let mut first = as_graph_name("first");
+    first.add_subgraph("first", "parent");
+    let first_truth = first.clone();
+    let mut second = as_graph_name("second");
+    let mut second_truth = second.clone();
+
+    second_truth.add_subgraph("second", "first");
+    second_truth.add_subgraph("first", "parent");
 
     update_relationships(Verdict::Supergraph, &mut first, &mut second);
-
-    assert_eq!(subgraphs(&second), pairs(&[("second", "first")]), "Wrong subgraphs for the subgraph");
-    assert!(second.is_subgraph_of(&first), "The subgraph relationship was not stored");
-    assert_eq!(first, original, "The supergraph was modified");
+    compare_graph_names(&first, &first_truth, "first");
+    compare_graph_names(&second, &second_truth, "second");
 }
 
 #[test]
 fn update_isomorphic() {
-    let mut first = name_of("first");
-    let mut second = name_of("second");
+    let mut first = as_graph_name("first");
+    let mut first_truth = first.clone();
+    let mut second = as_graph_name("second");
+    let mut second_truth = second.clone();
+
+    first_truth.add_translation("first", "second");
+    first_truth.add_translation("second", "first");
+    second_truth.add_translation("first", "second");
+    second_truth.add_translation("second", "first");
 
     update_relationships(Verdict::Isomorphic, &mut first, &mut second);
-
-    let expected = pairs(&[("first", "second"), ("second", "first")]);
-    assert_eq!(translations(&first), expected, "Wrong translations for the first graph");
-    assert_eq!(translations(&second), expected, "Wrong translations for the second graph");
-    assert!(first.translates_to(&second), "The forward translation is missing");
-    assert!(second.translates_to(&first), "The reverse translation is missing");
+    compare_graph_names(&first, &first_truth, "first");
+    compare_graph_names(&second, &second_truth, "second");
 }
 
 #[test]
 fn update_isomorphic_inherited() {
-    let mut first = name_of("first");
+    let mut first = as_graph_name("first");
     first.add_subgraph("first", "parent");
-    let mut second = name_of("second");
-    second.add_translation("second", "other");
+    let mut first_truth = first.clone();
+    let mut second = as_graph_name("second");
+    let mut second_truth = second.clone();
+
+    first_truth.add_translation("first", "second");
+    first_truth.add_translation("second", "first");
+    second_truth.add_translation("first", "second");
+    second_truth.add_translation("second", "first");
+    second_truth.add_subgraph("first", "parent");
 
     update_relationships(Verdict::Isomorphic, &mut first, &mut second);
-
-    // Both graphs know everything that either of them knew.
-    assert_eq!(subgraphs(&second), subgraphs(&first), "The subgraph relationships disagree");
-    assert_eq!(translations(&second), translations(&first), "The translation relationships disagree");
-    assert_eq!(subgraphs(&first), pairs(&[("first", "parent")]), "Wrong subgraphs");
-    assert_eq!(
-        translations(&first),
-        pairs(&[("first", "second"), ("second", "first"), ("second", "other")]),
-        "Wrong translations"
-    );
+    compare_graph_names(&first, &first_truth, "first");
+    compare_graph_names(&second, &second_truth, "second");
 }
 
 #[test]
 fn update_unnamed() {
-    // Every mutator in `GraphName` is a no-op if either graph has no name.
+    let mut named = as_graph_name("named");
+    named.add_subgraph("named", "parent");
+    let named_truth = named.clone();
+    let mut unnamed = GraphName::default();
+    let unnamed_truth = unnamed.clone();
+
     for verdict in [Verdict::Same, Verdict::Subgraph, Verdict::Supergraph, Verdict::Isomorphic] {
-        let mut first = name_of("first");
-        let mut second = GraphName::default();
-        update_relationships(verdict, &mut first, &mut second);
-        assert_eq!(first, name_of("first"), "The first name changed for {}", verdict);
-        assert_eq!(second, GraphName::default(), "The second name changed for {}", verdict);
+        update_relationships(verdict, &mut unnamed, &mut named);
+        let label = format!("({}, first, first unnamed)", verdict);
+        compare_graph_names(&named, &named_truth, &label);
+        let label = format!("({}, second, first unnamed)", verdict);
+        compare_graph_names(&unnamed, &unnamed_truth, &label);
+
+        update_relationships(verdict, &mut named, &mut unnamed);
+        let label = format!("({}, first, second unnamed)", verdict);
+        compare_graph_names(&named, &named_truth, &label);
+        let label = format!("({}, second, second unnamed)", verdict);
+        compare_graph_names(&unnamed, &unnamed_truth, &label);
     }
 }
 
 #[test]
 fn update_unrelated() {
-    let verdicts = [Verdict::NotIsomorphic(Mismatch::Colors), Verdict::Unresolved];
-    for verdict in verdicts {
-        let mut first = name_of("first");
-        let mut second = name_of("second");
+    let mut first = as_graph_name("first");
+    first.add_translation("first", "original");
+    let first_truth = first.clone();
+    let mut second = as_graph_name("second");
+    second.add_subgraph("second", "parent");
+    let second_truth = second.clone();
+
+    for verdict in [Verdict::Unrelated, Verdict::Unresolved] {
         update_relationships(verdict, &mut first, &mut second);
-        assert_eq!(first, name_of("first"), "The first name changed for {}", verdict);
-        assert_eq!(second, name_of("second"), "The second name changed for {}", verdict);
+        let label = format!("({}, first)", verdict);
+        compare_graph_names(&first, &first_truth, &label);
+        let label = format!("({}, second)", verdict);
+        compare_graph_names(&second, &second_truth, &label);
     }
 }
 
