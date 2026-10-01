@@ -1,34 +1,15 @@
-//! Deterministic hashing and reverse complements.
-//!
-//! The isomorphism algorithm colors the nodes by hashing isomorphism-invariant data. The colors of
-//! two graphs are only comparable if the hash function is exactly the same for both, so the
-//! functions here are deterministic and fixed. In particular, they never use a randomly seeded
-//! hasher such as [`std::collections::hash_map::RandomState`], and they do not depend on
-//! [`std::hash::Hasher`] implementations, whose output is not specified across Rust versions.
-//!
-//! A hash collision merges two colors. Because the same function is applied to both graphs, the
-//! same merge happens in both, so the coloring remains an isomorphism invariant and only becomes
-//! coarser. A coarser coloring means more search, never a wrong answer, and the final mapping is
-//! always verified without using any hash values.
+//! Deterministic hashing for node coloring in graph isomorphism.
 
 use gbz::Orientation;
 
 use std::cmp::Ordering;
 
-#[cfg(test)]
-mod tests;
-
 //-----------------------------------------------------------------------------
 
 /// Complement table for DNA bases.
 ///
-/// Unlike [`gbz::support::COMPLEMENT`], this table is an involution. It preserves case and maps
-/// every byte outside `ACGTacgt` to itself, so that `reverse_complement` is its own inverse for
-/// arbitrary byte strings.
-///
-/// This matters because the canonical GFA format treats sequences as case sensitive, as some graph
-/// implementations do not normalize them. A non-involutive complement would make the isomorphism
-/// relation asymmetric.
+/// Unlike [`gbz::support::COMPLEMENT`], this preserves case.
+/// We need this, since the naming scheme currently assumes that sequences are case sensitive.
 pub const COMPLEMENT: [u8; 256] = generate_complement_table();
 
 const fn generate_complement_table() -> [u8; 256] {
@@ -45,9 +26,7 @@ const fn generate_complement_table() -> [u8; 256] {
     result
 }
 
-/// Returns the reverse complement of the sequence.
-///
-/// See [`COMPLEMENT`] for how this differs from [`gbz::support::reverse_complement`].
+/// Returns the case sensitive reverse complement of the sequence.
 ///
 /// # Examples
 ///
@@ -65,8 +44,6 @@ pub fn reverse_complement(sequence: &[u8]) -> Vec<u8> {
 }
 
 /// Returns `true` if the first sequence is the reverse complement of the second.
-///
-/// This does not allocate.
 pub fn equals_reverse_complement(sequence: &[u8], other: &[u8]) -> bool {
     sequence.len() == other.len() &&
         sequence.iter().zip(other.iter().rev()).all(|(&c, &d)| c == COMPLEMENT[d as usize])
@@ -75,7 +52,6 @@ pub fn equals_reverse_complement(sequence: &[u8], other: &[u8]) -> bool {
 /// Compares the sequence to its reverse complement.
 ///
 /// Returns [`Ordering::Equal`] if the sequence is its own reverse complement.
-/// This does not allocate.
 pub fn compare_to_reverse_complement(sequence: &[u8]) -> Ordering {
     let len = sequence.len();
     for i in 0..len {
@@ -93,13 +69,11 @@ pub fn is_palindrome(sequence: &[u8]) -> bool {
     compare_to_reverse_complement(sequence) == Ordering::Equal
 }
 
-/// Returns the reference orientation of the sequence.
+/// Returns the canonical orientation of the sequence.
 ///
-/// This is [`Orientation::Forward`] if the sequence is lexicographically smaller than or equal to
-/// its reverse complement, and [`Orientation::Reverse`] otherwise. Because the two orientations of
-/// a node are considered in the same order in both graphs, corresponding nodes always get the same
-/// reference orientation.
-pub fn reference_orientation(sequence: &[u8]) -> Orientation {
+/// The canonical orientation is that of the smaller of the sequence and its reverse complement.
+/// Returns [`Orientation::Forward`] if the sequence is a palindrome.
+pub fn canonical_orientation(sequence: &[u8]) -> Orientation {
     match compare_to_reverse_complement(sequence) {
         Ordering::Greater => Orientation::Reverse,
         _ => Orientation::Forward,
@@ -147,6 +121,8 @@ pub fn hash_sequence(sequence: &[u8]) -> u64 {
 }
 
 /// Returns a hash value for the reverse complement of the sequence, without building it.
+///
+/// This is equivalent to calling [`hash_sequence`] on the reverse complement of the sequence.
 pub fn hash_reverse_complement(sequence: &[u8]) -> u64 {
     let mut result = FNV_OFFSET;
     for &c in sequence.iter().rev() {
@@ -164,6 +140,130 @@ pub fn hash_canonical_sequence(sequence: &[u8]) -> u64 {
         hash_sequence(sequence)
     } else {
         hash_reverse_complement(sequence)
+    }
+}
+
+//-----------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests
+{
+    use super::*;
+
+    #[test]
+    fn complement_is_an_involution() {
+        for value in 0..=255u8 {
+            let complement = COMPLEMENT[value as usize];
+            assert_eq!(
+                COMPLEMENT[complement as usize], value,
+                "The complement of byte {} is not an involution", value
+            );
+        }
+    }
+
+    #[test]
+    fn reverse_complement_is_an_involution() {
+        let sequences: Vec<&[u8]> = vec![
+            b"", b"A", b"AT", b"GATTACA", b"gattaca", b"AcGt", b"NNNN", b"*", b"ACGTN*acgtn",
+        ];
+        for sequence in sequences.iter() {
+            let once = reverse_complement(sequence);
+            assert_eq!(
+                reverse_complement(&once), sequence.to_vec(),
+                "Reverse complement is not an involution for {}", String::from_utf8_lossy(sequence)
+            );
+        }
+    }
+
+    #[test]
+    fn reverse_complement_values() {
+        assert_eq!(reverse_complement(b""), b"".to_vec(), "Wrong reverse complement for an empty sequence");
+        assert_eq!(reverse_complement(b"GATTA"), b"TAATC".to_vec(), "Wrong reverse complement");
+        assert_eq!(reverse_complement(b"gatta"), b"taatc".to_vec(), "Case was not preserved");
+        assert_eq!(reverse_complement(b"A*N"), b"N*T".to_vec(), "Unknown characters were not preserved");
+    }
+
+    #[test]
+    fn palindromes() {
+        let palindromes: Vec<&[u8]> = vec![b"", b"AT", b"GC", b"ACGT", b"NN", b"N", b"*", b"GATATC"];
+        for sequence in palindromes.iter() {
+            assert!(
+                is_palindrome(sequence),
+                "{} should be a palindrome", String::from_utf8_lossy(sequence)
+            );
+            assert_eq!(
+                canonical_orientation(sequence), Orientation::Forward,
+                "Wrong reference orientation for palindrome {}", String::from_utf8_lossy(sequence)
+            );
+        }
+
+        let others: Vec<&[u8]> = vec![b"A", b"AA", b"GATTACA", b"At"];
+        for sequence in others.iter() {
+            assert!(
+                !is_palindrome(sequence),
+                "{} should not be a palindrome", String::from_utf8_lossy(sequence)
+            );
+        }
+    }
+
+    #[test]
+    fn canonical_orientation_is_consistent() {
+        // A sequence and its reverse complement must agree on the canonical form, and disagree on the
+        // reference orientation unless the sequence is a palindrome.
+        let sequences: Vec<&[u8]> = vec![b"A", b"GATTACA", b"AAAA", b"TTTT", b"acgtt"];
+        for sequence in sequences.iter() {
+            let rc = reverse_complement(sequence);
+            assert_eq!(
+                hash_canonical_sequence(sequence), hash_canonical_sequence(&rc),
+                "Different canonical hashes for {} and its reverse complement",
+                String::from_utf8_lossy(sequence)
+            );
+            assert_ne!(
+                canonical_orientation(sequence), canonical_orientation(&rc),
+                "Same reference orientation for {} and its reverse complement",
+                String::from_utf8_lossy(sequence)
+            );
+            // The canonical form is the smaller of the sequence and its reverse complement.
+            let smaller: &[u8] = if **sequence <= rc[..] { sequence } else { &rc };
+            assert_eq!(
+                hash_canonical_sequence(sequence), hash_sequence(smaller),
+                "Wrong canonical hash for {}", String::from_utf8_lossy(sequence)
+            );
+        }
+    }
+
+    #[test]
+    fn hashing_matches_the_built_sequence() {
+        let sequences: Vec<&[u8]> = vec![b"", b"A", b"GATTACA", b"acgtN*"];
+        for sequence in sequences.iter() {
+            assert_eq!(
+                hash_reverse_complement(sequence), hash_sequence(&reverse_complement(sequence)),
+                "Wrong reverse complement hash for {}", String::from_utf8_lossy(sequence)
+            );
+        }
+    }
+
+    #[test]
+    fn hashing_separates_sequences() {
+        // Sequences of the same length, of different lengths, and permutations of each other.
+        let sequences: Vec<&[u8]> = vec![b"", b"A", b"C", b"AC", b"CA", b"AAA", b"ACGT", b"acgt"];
+        let mut hashes: Vec<u64> = sequences.iter().map(|s| hash_sequence(s)).collect();
+        hashes.sort_unstable();
+        hashes.dedup();
+        assert_eq!(hashes.len(), sequences.len(), "Hash values are not distinct");
+    }
+
+    #[test]
+    fn mixing_is_a_bijection_on_samples() {
+        let mut values: Vec<u64> = (0..1000u64).map(mix).collect();
+        values.sort_unstable();
+        values.dedup();
+        assert_eq!(values.len(), 1000, "Mixing is not injective on small values");
+
+        // Combining must depend on both arguments and on their order.
+        assert_ne!(combine(1, 2), combine(2, 1), "Combining is symmetric");
+        assert_ne!(combine(0, 0), combine(0, 1), "Combining ignores the value");
+        assert_ne!(combine(0, 0), combine(1, 0), "Combining ignores the hash");
     }
 }
 

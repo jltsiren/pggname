@@ -190,7 +190,7 @@ impl Coloring {
             let sequence = graph.sequence(node);
             let key = hashing::hash_canonical_sequence(&sequence);
             let palindrome = hashing::is_palindrome(&sequence);
-            let reference = hashing::reference_orientation(&sequence);
+            let reference = hashing::canonical_orientation(&sequence);
             // The side the sequence starts from gets bit 0. For a palindrome, the sequence cannot tell
             // the sides apart, so both get bit 0.
             let head = support::entry_side(reference);
