@@ -1,20 +1,19 @@
 //! Color refinement.
 //!
-//! The nodes are colored by hashing isomorphism-invariant data, and the colors are then refined by
-//! one-dimensional Weisfeiler-Leman refinement over node sides. Corresponding nodes in isomorphic
-//! graphs always get the same color, so a difference in the multiset of colors proves that the
-//! graphs are not isomorphic.
+//! The nodes are colored by hashing isomorphism-invariant data.
+//! The colors are then refined by one-dimensional Weisfeiler-Leman refinement over node sides.
+//! Corresponding nodes in isomorphic graphs always get the same color
+//! A difference in the multiset of colors proves that the graphs are not isomorphic.
 //!
-//! The refinement works on node sides rather than nodes. Each side gets a color, and the color of a
-//! node is derived from the colors of its two sides. Because a node may map to the reverse
-//! complement of another node, the two sides of a node are interchangeable a priori. The node color
-//! is therefore built from the *unordered* pair of side colors, and the side the smaller color
-//! belongs to becomes the head side.
+//! The refinement works on node sides.
+//! Each side gets a color, and the color of a node is derived from the colors of its two sides.
+//! Because a node may map to the reverse complement of another node, the two sides of a node are interchangeable a priori.
+//! Node color is therefore built from the unordered pair of side colors.
+//! The side with the smaller color becomes the head side.
 //!
-//! A node whose two sides have the same color is *symmetric*: the refinement cannot tell its sides
-//! apart. Such a node carries a free choice of relative orientation. Because an edge determines the
-//! relative orientation of its endpoints, this costs at most one binary choice per connected
-//! component, and only when no node in the component is asymmetric.
+//! A symmetric node has two sides with the same color.
+//! Such a node carries a free choice of relative orientation.
+//! Because an edge determines the relative orientation of its endpoints, this costs at most one binary choice per connected component.
 
 use crate::topology::Topology;
 
@@ -24,9 +23,6 @@ use super::hashing::{self, combine};
 use gbz::NodeSide;
 use gbz::support;
 
-#[cfg(test)]
-mod tests;
-
 //-----------------------------------------------------------------------------
 
 /// An isomorphism-invariant coloring of the nodes of a graph.
@@ -34,8 +30,8 @@ mod tests;
 pub(crate) struct Coloring {
     // Color of each node.
     colors: Vec<u64>,
+    // FIXME: replace with a bitvector
     // `true` if the right side is the head side of the node.
-    // These could be bitvectors, which would matter for very large graphs.
     head_is_right: Vec<bool>,
     // `true` if the two sides of the node cannot be told apart.
     symmetric: Vec<bool>,
@@ -57,11 +53,11 @@ impl Coloring {
             classes: 0,
         };
 
-        let (left, right) = initial_colors(graph);
+        let (left, right) = Self::initial_colors(graph);
         result.update(left, right);
 
         let mut scratch = Vec::new();
-        result.classes = count_classes(&result.colors, &mut scratch);
+        result.classes = Self::count_classes(&result.colors, &mut scratch);
         for _ in 0..options.refinement_rounds {
             // The coloring cannot be refined further once every node has a distinct color.
             if result.classes >= nodes {
@@ -70,7 +66,7 @@ impl Coloring {
             let (left, right) = result.refined_colors(graph);
             let mut candidate = result.clone();
             candidate.update(left, right);
-            let classes = count_classes(&candidate.colors, &mut scratch);
+            let classes = Self::count_classes(&candidate.colors, &mut scratch);
             // A round that does not split any class cannot be followed by one that does.
             if classes <= result.classes {
                 break;
@@ -115,6 +111,7 @@ impl Coloring {
 
     /// Returns the color of the given side of the given node.
     ///
+    /// The color is derived from the current color of the node.
     /// Both sides of a symmetric node get the same color.
     pub(crate) fn side_color(&self, node: usize, side: NodeSide) -> u64 {
         let bit = if self.symmetric[node] { 0 } else { (side != self.head_side(node)) as u64 };
@@ -123,8 +120,9 @@ impl Coloring {
 
     /// Returns an order-independent signature of the multiset of colors.
     ///
-    /// Isomorphic graphs always get the same signature. The converse does not hold, both because
-    /// the refinement cannot tell all graphs apart and because the signature is a hash.
+    /// Isomorphic graphs always get the same signature.
+    /// Some non-isomorphic graphs cannot be told apart in a limited number of color refinement rounds.
+    /// Two disctinct multisets may also get the same hash signature.
     pub(crate) fn signature(&self) -> (u64, u64) {
         let mut sum = 0u64;
         let mut sum_of_squares = 0u64;
@@ -148,6 +146,8 @@ impl Coloring {
     }
 
     // Computes the side colors for the next round.
+    // Each node side gets an initial color derived from the current color of the node.
+    // The actual color is obtained by combining it with the colors of its neighbors, including the other side.
     fn refined_colors<T: Topology>(&self, graph: &T) -> (Vec<u64>, Vec<u64>) {
         let nodes = graph.nodes();
         let mut left = vec![0; nodes];
@@ -175,84 +175,85 @@ impl Coloring {
 
         (left, right)
     }
-}
 
-//-----------------------------------------------------------------------------
+    // Computes the side colors for the first round.
+    // The initial color of a node is a hash of the canonical sequence, with the entry side becoming the head side.
+    // This is modified if there is a self-loop connecting the sides.
+    // The initial color of each side is derived from that, with special handling for palindromes.
+    // The final color is further modified by the presence of self-loops and the degree of the side.
+    fn initial_colors<T: Topology>(graph: &T) -> (Vec<u64>, Vec<u64>) {
+        let nodes = graph.nodes();
+        let mut left = vec![0; nodes];
+        let mut right = vec![0; nodes];
 
-// Computes the side colors for the first round.
-fn initial_colors<T: Topology>(graph: &T) -> (Vec<u64>, Vec<u64>) {
-    let nodes = graph.nodes();
-    let mut left = vec![0; nodes];
-    let mut right = vec![0; nodes];
+        for node in 0..nodes {
+            let sequence = graph.sequence(node);
+            let key = hashing::hash_canonical_sequence(&sequence);
+            let palindrome = hashing::is_palindrome(&sequence);
+            let reference = hashing::reference_orientation(&sequence);
+            // The side the sequence starts from gets bit 0. For a palindrome, the sequence cannot tell
+            // the sides apart, so both get bit 0.
+            let head = support::entry_side(reference);
 
-    for node in 0..nodes {
-        let sequence = graph.sequence(node);
-        let key = hashing::hash_canonical_sequence(&sequence);
-        let palindrome = hashing::is_palindrome(&sequence);
-        let reference = hashing::reference_orientation(&sequence);
-        // The side the sequence starts from gets bit 0. For a palindrome, the sequence cannot tell
-        // the sides apart, so both get bit 0.
-        let head = support::entry_side(reference);
+            // A self-loop joining the two sides of the node is a property of the node, while a
+            // self-loop at a single side is a property of that side. Flipping a node swaps its sides,
+            // so the two must be kept separate.
+            let (through_loop, side_loops) = Self::loop_flags(graph, node);
+            let node_key = combine(key, through_loop as u64);
 
-        // A self-loop joining the two sides of the node is a property of the node, while a
-        // self-loop at a single side is a property of that side. Flipping a node swaps its sides,
-        // so the two must be kept separate.
-        let (through_loop, side_loops) = loop_flags(graph, node);
-        let node_key = combine(key, through_loop as u64);
-
-        for side in [NodeSide::Left, NodeSide::Right] {
-            let bit = if palindrome { 0 } else { (side != head) as u64 };
-            let mut color = combine(node_key, bit);
-            color = combine(color, side_loops[side as usize] as u64);
-            color = combine(color, graph.degree(node, side) as u64);
-            if side == NodeSide::Left { left[node] = color; } else { right[node] = color; }
+            for side in [NodeSide::Left, NodeSide::Right] {
+                let bit = if palindrome { 0 } else { (side != head) as u64 };
+                let mut color = combine(node_key, bit);
+                color = combine(color, side_loops[side as usize] as u64);
+                color = combine(color, graph.degree(node, side) as u64);
+                if side == NodeSide::Left { left[node] = color; } else { right[node] = color; }
+            }
         }
+
+        (left, right)
     }
 
-    (left, right)
-}
-
-// Returns whether the node has a self-loop joining its two sides, and whether each side has a
-// self-loop of its own.
-fn loop_flags<T: Topology>(graph: &T, node: usize) -> (bool, [bool; 2]) {
-    let mut through = false;
-    let mut sides = [false; 2];
-    for side in [NodeSide::Left, NodeSide::Right] {
-        for (neighbor, neighbor_side) in graph.neighbors(node, side) {
-            if neighbor == node {
-                if neighbor_side == side {
-                    sides[side as usize] = true;
-                } else {
-                    through = true;
+    // Returns (self-loop between sides, [self-loop at left side, self-loop at right side]).
+    fn loop_flags<T: Topology>(graph: &T, node: usize) -> (bool, [bool; 2]) {
+        let mut through = false;
+        let mut sides = [false; 2];
+        for side in [NodeSide::Left, NodeSide::Right] {
+            for (neighbor, neighbor_side) in graph.neighbors(node, side) {
+                if neighbor == node {
+                    if neighbor_side == side {
+                        sides[side as usize] = true;
+                    } else {
+                        through = true;
+                    }
                 }
             }
         }
+        (through, sides)
     }
-    (through, sides)
-}
 
-// Returns the number of distinct colors, using the buffer as scratch space.
-fn count_classes(colors: &[u64], buffer: &mut Vec<u64>) -> usize {
-    buffer.clear();
-    buffer.extend_from_slice(colors);
-    buffer.sort_unstable();
-    buffer.dedup();
-    buffer.len()
+    // Returns the number of distinct colors, using the buffer as scratch space.
+    fn count_classes(colors: &[u64], buffer: &mut Vec<u64>) -> usize {
+        buffer.clear();
+        buffer.extend_from_slice(colors);
+        buffer.sort_unstable();
+        buffer.dedup();
+        buffer.len()
+    }
 }
 
 //-----------------------------------------------------------------------------
 
-/// Color classes shared by two colorings.
+/// A mapping from node colorings in two graphs to color classes for each node.
 ///
-/// A class is a color that occurs in both graphs. The classes are numbered so that the same number
-/// means the same color in both graphs.
+/// A color class is an integer in `0..num_classes()`.
+/// This assumes that the multisets of colors in the two graphs are identical.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Classes {
     // Class of each node in the first graph.
     in_first: Vec<u32>,
     // Class of each node in the second graph.
     in_second: Vec<u32>,
-    // Number of nodes in each class, which is the same in both graphs.
+    // Number of nodes in each class.
     sizes: Vec<u32>,
 }
 
@@ -262,8 +263,8 @@ impl Classes {
     /// Returns [`Mismatch::Colors`] if the graphs have different multisets of colors, which proves
     /// that they are not isomorphic.
     pub(crate) fn new(first: &Coloring, second: &Coloring) -> Result<Self, Mismatch> {
-        let sorted_first = sorted_colors(first);
-        let sorted_second = sorted_colors(second);
+        let sorted_first = Self::sorted_colors(first);
+        let sorted_second = Self::sorted_colors(second);
 
         let mut result = Classes {
             in_first: vec![0; first.len()],
@@ -271,6 +272,7 @@ impl Classes {
             sizes: Vec::new(),
         };
 
+        // FIXME: This is too complicated. We can iterate over both sorted lists simultaneously.
         // Merge-join the runs of equal colors. Any color that occurs in one graph only, or that
         // occurs a different number of times in the two graphs, is a mismatch.
         let (mut i, mut j) = (0, 0);
@@ -282,8 +284,8 @@ impl Classes {
             if color != sorted_second[j].0 {
                 return Err(Mismatch::Colors);
             }
-            let end_first = run_end(&sorted_first, i);
-            let end_second = run_end(&sorted_second, j);
+            let end_first = Self::run_end(&sorted_first, i);
+            let end_second = Self::run_end(&sorted_second, j);
             if end_first - i != end_second - j {
                 return Err(Mismatch::Colors);
             }
@@ -332,25 +334,201 @@ impl Classes {
     pub(crate) fn second_classes(&self) -> &[u32] {
         &self.in_second
     }
-}
 
-// Returns the (color, node) pairs of the coloring in sorted order.
-fn sorted_colors(coloring: &Coloring) -> Vec<(u64, u32)> {
-    let mut result: Vec<(u64, u32)> = (0..coloring.len())
-        .map(|node| (coloring.color(node), node as u32))
-        .collect();
-    result.sort_unstable();
-    result
-}
-
-// Returns the end of the run of equal colors starting at the given offset.
-fn run_end(sorted: &[(u64, u32)], start: usize) -> usize {
-    let color = sorted[start].0;
-    let mut end = start + 1;
-    while end < sorted.len() && sorted[end].0 == color {
-        end += 1;
+    // Returns the (color, node) pairs of the coloring in sorted order.
+    fn sorted_colors(coloring: &Coloring) -> Vec<(u64, u32)> {
+        let mut result: Vec<(u64, u32)> = (0..coloring.len())
+            .map(|node| (coloring.color(node), node as u32))
+            .collect();
+        result.sort_unstable();
+        result
     }
-    end
+
+    // Returns the end of the run of equal colors starting at the given offset.
+    fn run_end(sorted: &[(u64, u32)], start: usize) -> usize {
+        let color = sorted[start].0;
+        let mut end = start + 1;
+        while end < sorted.len() && sorted[end].0 == color {
+            end += 1;
+        }
+        end
+    }
+}
+
+//-----------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests
+{
+    use super::*;
+
+    use crate::algorithms;
+    use crate::graph::GraphStr;
+    use crate::test_utils::*;
+    use crate::topology::{GbzTopology, IndexedGraph};
+
+    use gbz::GBZ;
+    use rand::SeedableRng;
+    use rand::rngs::StdRng;
+    use simple_sds::serialize;
+
+    use std::fs::OpenOptions;
+    use std::io::BufReader;
+
+    fn signature_of<T: Topology>(graph: &T) -> (u64, u64) {
+        Coloring::new(graph, &Options::default()).signature()
+    }
+
+    fn gfa_text(text: &str) -> IndexedGraph {
+        let graph: GraphStr = algorithms::parse_gfa(BufReader::new(text.as_bytes())).unwrap();
+        IndexedGraph::from(&graph)
+    }
+
+    #[test]
+    fn permutation_does_not_change_the_signature() {
+        for &seed in SEEDS.iter() {
+            let mut rng = StdRng::seed_from_u64(seed);
+            let graph = random_graph(30, 45, &mut rng);
+            let permutation = random_permutation(graph.nodes(), &mut rng);
+            let permuted = permute(&graph, &permutation, &no_flips(graph.nodes()));
+            assert_eq!(
+                signature_of(&graph), signature_of(&permuted),
+                "Permuting the nodes changed the signature (seed {})", seed
+            );
+        }
+    }
+
+    #[test]
+    fn flips_do_not_change_the_signature() {
+        for &seed in SEEDS.iter() {
+            let mut rng = StdRng::seed_from_u64(seed);
+            let graph = random_graph(30, 45, &mut rng);
+            let permutation = random_permutation(graph.nodes(), &mut rng);
+            let flips = random_flips(graph.nodes(), &mut rng);
+            let permuted = permute(&graph, &permutation, &flips);
+            assert_eq!(
+                signature_of(&graph), signature_of(&permuted),
+                "Flipping the nodes changed the signature (seed {})", seed
+            );
+        }
+
+        // A path of distinct, non-palindromic sequences, with a single node reverse complemented.
+        let graph = rigid_graph(6);
+        let mut flips = no_flips(graph.nodes());
+        flips[2] = true;
+        let flipped = permute(&graph, &(0..graph.nodes()).collect::<Vec<_>>(), &flips);
+        assert_eq!(
+            signature_of(&graph), signature_of(&flipped),
+            "Flipping a single node changed the signature"
+        );
+    }
+
+    #[test]
+    fn signature_detects_changes() {
+        let base = "S\t1\tGATT\nS\t2\tACA\nS\t3\tTTG\nS\t4\tCCA\n\
+                    L\t1\t+\t2\t+\nL\t1\t+\t3\t+\nL\t2\t+\t4\t+\nL\t3\t+\t4\t+\n";
+        let graph = gfa_text(base);
+
+        let changed_base = "S\t1\tGATT\nS\t2\tACC\nS\t3\tTTG\nS\t4\tCCA\n\
+                            L\t1\t+\t2\t+\nL\t1\t+\t3\t+\nL\t2\t+\t4\t+\nL\t3\t+\t4\t+\n";
+        let extra_edge = "S\t1\tGATT\nS\t2\tACA\nS\t3\tTTG\nS\t4\tCCA\n\
+                        L\t1\t+\t2\t+\nL\t1\t+\t3\t+\nL\t2\t+\t4\t+\nL\t3\t+\t4\t+\nL\t1\t+\t4\t+\n";
+        let moved_edge = "S\t1\tGATT\nS\t2\tACA\nS\t3\tTTG\nS\t4\tCCA\n\
+                        L\t1\t+\t2\t+\nL\t1\t+\t3\t+\nL\t2\t+\t4\t+\nL\t3\t+\t4\t-\n";
+
+        for (name, text) in [("a changed base", changed_base), ("an added edge", extra_edge), ("a moved edge", moved_edge)] {
+            let other = gfa_text(text);
+            assert_ne!(
+                signature_of(&graph), signature_of(&other),
+                "The signature did not detect {}", name
+            );
+        }
+    }
+
+    #[test]
+    fn backends_agree() {
+        let path = support::get_test_data("example.gfa");
+        let file = OpenOptions::new().read(true).open(&path).unwrap();
+        let gfa: GraphStr = algorithms::parse_gfa(BufReader::new(file)).unwrap();
+        let from_gfa = IndexedGraph::from(&gfa);
+
+        let path = support::get_test_data("example.gbz");
+        let gbz: GBZ = serialize::load_from(&path).unwrap();
+        let from_gbz = GbzTopology::new(&gbz).unwrap();
+
+        assert_eq!(
+            signature_of(&from_gfa), signature_of(&from_gbz),
+            "The GFA and GBZ backends disagree on the signature"
+        );
+    }
+
+    #[test]
+    fn refinement_separates_nodes() {
+        // The two components of `example.gfa` have the same sequences but different structure.
+        let path = support::get_test_data("example.gfa");
+        let file = OpenOptions::new().read(true).open(&path).unwrap();
+        let gfa: GraphStr = algorithms::parse_gfa(BufReader::new(file)).unwrap();
+        let graph = IndexedGraph::from(&gfa);
+
+        let coloring = Coloring::new(&graph, &Options::default());
+        assert_eq!(
+            coloring.classes(), graph.nodes(),
+            "Refinement did not give every node of example.gfa a distinct color"
+        );
+        assert!(coloring.rounds() > 0, "Refinement did not run any rounds");
+    }
+
+    #[test]
+    fn refinement_stops_when_stable() {
+        // A cycle of identical nodes is stable from the start: every node looks the same.
+        let text = "S\t1\tAT\nS\t2\tAT\nS\t3\tAT\nL\t1\t+\t2\t+\nL\t2\t+\t3\t+\nL\t3\t+\t1\t+\n";
+        let graph = gfa_text(text);
+        let coloring = Coloring::new(&graph, &Options::default());
+        assert_eq!(coloring.classes(), 1, "A cycle of identical nodes should have one color class");
+        assert_eq!(coloring.rounds(), 0, "Refinement should stop immediately when the coloring is stable");
+    }
+
+    #[test]
+    fn classes_match_for_isomorphic_graphs() {
+        for &seed in SEEDS.iter() {
+            let mut rng = StdRng::seed_from_u64(seed);
+            let graph = random_graph(30, 45, &mut rng);
+            let permutation = random_permutation(graph.nodes(), &mut rng);
+            let flips = random_flips(graph.nodes(), &mut rng);
+            let permuted = permute(&graph, &permutation, &flips);
+
+            let first = Coloring::new(&graph, &Options::default());
+            let second = Coloring::new(&permuted, &Options::default());
+            let classes = Classes::new(&first, &second).unwrap_or_else(|e| {
+                panic!("Failed to build classes for isomorphic graphs (seed {}): {}", seed, e)
+            });
+
+            // Each node must be in the same class as its image.
+            for (node, &image) in permutation.iter().enumerate() {
+                assert_eq!(
+                    classes.in_first(node), classes.in_second(image),
+                    "Node {} and its image are in different classes (seed {})", node, seed
+                );
+            }
+            let total: usize = (0..classes.len()).map(|c| classes.size(c as u32)).sum();
+            assert_eq!(total, graph.nodes(), "The classes do not cover every node (seed {})", seed);
+        }
+    }
+
+    #[test]
+    fn classes_detect_mismatches() {
+        let graph = gfa_text("S\t1\tGATT\nS\t2\tACA\nL\t1\t+\t2\t+\n");
+        let other = gfa_text("S\t1\tGATT\nS\t2\tACC\nL\t1\t+\t2\t+\n");
+        let smaller = gfa_text("S\t1\tGATT\n");
+
+        let first = Coloring::new(&graph, &Options::default());
+        let second = Coloring::new(&other, &Options::default());
+        let third = Coloring::new(&smaller, &Options::default());
+
+        assert_eq!(Classes::new(&first, &second), Err(Mismatch::Colors), "Different sequences were not detected");
+        assert_eq!(Classes::new(&first, &third), Err(Mismatch::Colors), "Different node counts were not detected");
+        assert!(Classes::new(&first, &first).is_ok(), "A graph does not match itself");
+    }
 }
 
 //-----------------------------------------------------------------------------
