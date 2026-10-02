@@ -2,7 +2,7 @@ use super::*;
 
 use crate::Graph;
 use crate::algorithms;
-use crate::graph::{GBZStr, GraphInt, GraphStr};
+use crate::graph::{GraphInt, GraphStr};
 use crate::test_utils::*;
 
 use gbz::GBZ;

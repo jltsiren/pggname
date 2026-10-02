@@ -450,7 +450,7 @@ pub fn are_isomorphic_unitigs_with_statistics<A: Topology, B: Topology>(
 
     let result = match result {
         Isomorphism::Isomorphic(mapping) => {
-            let translation = translation::expand(&first_unitigs, &second_unitigs, &mapping);
+            let translation = Translation::new(&first_unitigs, &second_unitigs, &mapping);
             match translation::verify_translation(first, second, &translation) {
                 Ok(()) => UnitigIsomorphism::Isomorphic(translation),
                 // The isomorphism of the compacted graphs has already been verified, so this
