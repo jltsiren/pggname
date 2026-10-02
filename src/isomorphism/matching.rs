@@ -1,25 +1,11 @@
-//! Finding the node mapping.
+//! Matching nodes based on color classes.
 //!
-//! The search starts from *anchors*: color classes that contain exactly one node in each graph.
-//! Such a node can only map to its counterpart, so the pair is forced. From a matched pair, the
-//! neighbors on each side are grouped by color, and a group that contains exactly one unmatched
-//! node in each graph is forced as well. Propagating these deductions matches an entire connected
-//! component in linear time, as long as the colors are specific enough.
-//!
-//! Every forced deduction preserves extendability: if the partial mapping can be extended to an
-//! isomorphism, so can the result of the deduction. A conflict reached without making any choices
-//! is therefore a proof that the graphs are not isomorphic.
-//!
-//! Where the colors are not specific enough, the search individualizes one node: it tries each
-//! candidate in turn, propagates, and backtracks on a conflict. Candidates are taken from the group
-//! at a site next to an already matched pair whenever possible, because such groups are small.
-//!
-//! The relative orientation is never guessed during propagation. If node `x` is reached through
-//! side `sx` in the first graph and node `y` through side `sy` in the second, then side `sx` of `x`
-//! corresponds to side `sy` of `y`, which determines whether the node is flipped. This is why
-//! mapping nodes to reverse complements costs almost nothing: an edge determines the relative
-//! orientation of its endpoints, so the orientations of a whole connected component follow from its
-//! first matched pair.
+//! The search starts from anchors: color classes that contain exactly one node in each graph.
+//! These nodes must be necessarily matched (forced).
+//! From a matched pair, the neighbors on each side are grouped by color.
+//! A group that contains exactly one unmatched node in each graph is forced as well.
+//! Once all forced deductions have been made, we make a choice and propagate its consequences.
+//! If this leads to a conflict, we backtrack and try a different choice.
 
 use crate::topology::Topology;
 
@@ -59,6 +45,7 @@ enum Choice {
 }
 
 // A group of unmatched candidates at a site.
+// We are currently considering any matching between the two sets.
 struct Group {
     here: Vec<(usize, NodeSide)>,
     there: Vec<(usize, NodeSide)>,
@@ -67,14 +54,17 @@ struct Group {
 // A point the search can backtrack to.
 #[derive(Copy, Clone, Debug)]
 struct Mark {
+    // The position in the trail to backtrack to.
     trail: usize,
+    // The number of pending sites at the time of the mark.
     pending: usize,
+    // The first site in `pending` that may still be unresolved.
     head: usize,
 }
 
 //-----------------------------------------------------------------------------
 
-/// Builds a mapping between the nodes of two graphs.
+/// Builder for a mapping between the nodes of two graphs.
 pub(crate) struct Matcher<'a, A: Topology, B: Topology> {
     first: &'a A,
     second: &'a B,
@@ -86,19 +76,19 @@ pub(crate) struct Matcher<'a, A: Topology, B: Topology> {
     image: Vec<u32>,
     // Which nodes of the second graph have been taken.
     taken: Vec<bool>,
-    // Nodes of the first graph whose neighbors have not been matched yet.
+    // Stack of assigned nodes of the first graph whose neighbors have not been examined yet.
     queue: Vec<u32>,
-    // Sites `2 * node + side` in the first graph where several neighbors share a color.
+    // Sites `2 * node + side` for nodes coming from `queue` where several neighbors share a color.
     pending: Vec<u32>,
     // The first site in `pending` that may still be unresolved.
     head: usize,
-    // Nodes assigned since the start, for undoing.
+    // Nodes of the first graph assigned since the start, for undoing.
     trail: Vec<u32>,
-    // Members of each class, in CSR format.
+    // Members of each class, as (offsets, members).
+    // Class `i` contains nodes `members[offsets[i]..offsets[i + 1]]`.
     first_members: (Vec<u32>, Vec<u32>),
     second_members: (Vec<u32>, Vec<u32>),
-    // Classes whose members are isolated nodes with the same sequence, and are therefore
-    // interchangeable.
+    // Classes whose members are isolated nodes with the same sequence, and are therefore interchangeable.
     interchangeable: Vec<bool>,
 
     assigned: usize,
@@ -115,8 +105,8 @@ impl<'a, A: Topology, B: Topology> Matcher<'a, A, B> {
         first_coloring: &'a Coloring, second_coloring: &'a Coloring,
         classes: &'a Classes, options: &'a Options
     ) -> Self {
-        let first_members = class_members(classes.first_classes(), classes.len());
-        let second_members = class_members(classes.second_classes(), classes.len());
+        let first_members = class_offsets_and_members(classes.first_classes(), classes.len());
+        let second_members = class_offsets_and_members(classes.second_classes(), classes.len());
         let interchangeable = interchangeable_classes(
             first, second, classes, &first_members, &second_members
         );
@@ -155,9 +145,7 @@ impl<'a, A: Topology, B: Topology> Matcher<'a, A, B> {
     }
 
     // Assigns every class that contains exactly one node in each graph.
-    //
-    // A symmetric node is skipped, because its relative orientation would be a choice rather than a
-    // deduction.
+    // Symmetric nodes are skipped, as their orientation requires a choice.
     fn seed_anchors(&mut self) -> Result<(), ()> {
         for class in 0..self.classes.len() {
             if self.classes.size(class as u32) != 1 {
@@ -170,9 +158,7 @@ impl<'a, A: Topology, B: Topology> Matcher<'a, A, B> {
             }
             let flip = self.first_coloring.head_side(node) != self.second_coloring.head_side(image);
             let orientation = if flip { Orientation::Reverse } else { Orientation::Forward };
-            if self.assign(node, image, orientation).is_err() {
-                return Err(());
-            }
+            self.assign(node, image, orientation)?;
         }
 
         Ok(())
@@ -194,6 +180,7 @@ impl<'a, A: Topology, B: Topology> Matcher<'a, A, B> {
                         Outcome::Conflict
                     };
                 },
+                // Branch on multiple oriented candidate images for a node.
                 Choice::Site { node, side, candidates } => {
                     let options: Vec<(usize, Orientation)> = candidates.into_iter()
                         .map(|(target, target_side)| {
@@ -207,6 +194,7 @@ impl<'a, A: Topology, B: Topology> Matcher<'a, A, B> {
                         .collect();
                     return self.branch(node, options);
                 },
+                // Branch on multiple candidate images for a node, in both orientations if the node is symmetric.
                 Choice::Seed { node, candidates } => {
                     let options = self.seed_options(node, &candidates);
                     return self.branch(node, options);
@@ -226,6 +214,7 @@ impl<'a, A: Topology, B: Topology> Matcher<'a, A, B> {
 
             let mark = self.mark();
             if self.assign(node, target, orientation).is_ok() {
+                // Recursive call. We assume that our budget is not high enough to worry about stack overflows.
                 match self.search() {
                     Outcome::Complete => return Outcome::Complete,
                     // Once the budget is gone, the remaining options cannot be ruled out.
@@ -270,11 +259,11 @@ impl<'a, A: Topology, B: Topology> Matcher<'a, A, B> {
                 Err(()) => return Choice::Conflict,
                 Ok(None) => { self.head += 1; },
                 Ok(Some(group)) => {
-                    // Matching the site may have forced other pairs. Propagate those first: `undo`
-                    // clears the queue, so a node left in it would never have its edges checked.
+                    // Matching the site may have forced other pairs. Propagate those first.
                     if !self.queue.is_empty() {
                         return Choice::Progress;
                     }
+                    // Try matching the first node in the first graph to any candidate in the second graph.
                     return Choice::Site { node: group.here[0].0, side: group.here[0].1, candidates: group.there };
                 },
             }
@@ -350,7 +339,6 @@ impl<'a, A: Topology, B: Topology> Matcher<'a, A, B> {
     }
 
     // Matches the neighbors of one side of a matched pair, assigning every forced pair.
-    //
     // Returns the first group that remains ambiguous, or an error if the mapping is broken.
     fn site_group(
         &mut self, node: usize, side: NodeSide, image: usize, image_side: NodeSide
@@ -418,7 +406,9 @@ impl<'a, A: Topology, B: Topology> Matcher<'a, A, B> {
         Ok(None)
     }
 
-    // Assigns a node of the first graph to a node of the second graph.
+    // Assigns a node of the first graph to a node of the second graph in the given orientation.
+    // Checks that the assignment does not conflict with earlier assignments.
+    // Checks that the sequences and degrees match.
     fn assign(&mut self, node: usize, image: usize, orientation: Orientation) -> Result<(), ()> {
         let encoded = (2 * image + (orientation as usize)) as u32;
 
@@ -437,8 +427,7 @@ impl<'a, A: Topology, B: Topology> Matcher<'a, A, B> {
                 return Err(());
             }
         }
-        // The colors are hashes, so the sequences themselves have to be compared. This also makes
-        // the interchangeability of isolated nodes an exact property rather than a hash claim.
+        // The sequences must match in the given orientation.
         let matches = {
             let sequence = self.first.sequence(node);
             let target = self.second.sequence(image);
@@ -507,8 +496,13 @@ impl<'a, A: Topology, B: Topology> Matcher<'a, A, B> {
     // Returns the members of the given class.
     fn members(&self, in_first: bool, class: u32) -> &[u32] {
         let (offsets, members) = if in_first { &self.first_members } else { &self.second_members };
-        &members[offsets[class as usize] as usize..offsets[class as usize + 1] as usize]
+        members_of_class(offsets, members, class as usize)
     }
+}
+
+// Returns the members of the given class as a slice.
+fn members_of_class<'a>(offsets: &[u32], members: &'a [u32], class: usize) -> &'a [u32] {
+    &members[offsets[class] as usize..offsets[class + 1] as usize]
 }
 
 //-----------------------------------------------------------------------------
@@ -525,8 +519,9 @@ fn decode_site(encoded: u32) -> (usize, NodeSide) {
     (encoded / 2, side)
 }
 
-// Returns the members of each class in CSR format.
-fn class_members(class_of: &[u32], class_count: usize) -> (Vec<u32>, Vec<u32>) {
+// Returns the members of each class as (offsets, members).
+// Class `i` contains nodes `members[offsets[i]..offsets[i + 1]]`.
+fn class_offsets_and_members(class_of: &[u32], class_count: usize) -> (Vec<u32>, Vec<u32>) {
     let mut offsets = vec![0u32; class_count + 1];
     for &class in class_of.iter() {
         offsets[class as usize + 1] += 1;
@@ -546,10 +541,7 @@ fn class_members(class_of: &[u32], class_count: usize) -> (Vec<u32>, Vec<u32>) {
 }
 
 // Determines which classes consist of isolated nodes that all have the same sequence.
-//
-// The members of such a class can be matched in any order, because any permutation of them is an
-// automorphism. Without this, a graph with many identical isolated nodes would turn every one of
-// them into a choice point.
+// These nodes can be matched arbitrarily.
 fn interchangeable_classes<A: Topology, B: Topology>(
     first: &A, second: &B, classes: &Classes,
     first_members: &(Vec<u32>, Vec<u32>), second_members: &(Vec<u32>, Vec<u32>)
@@ -557,31 +549,37 @@ fn interchangeable_classes<A: Topology, B: Topology>(
     let mut result = vec![false; classes.len()];
 
     for (class, flag) in result.iter_mut().enumerate() {
-        let here = &first_members.1[
-            first_members.0[class] as usize..first_members.0[class + 1] as usize
-        ];
-        let there = &second_members.1[
-            second_members.0[class] as usize..second_members.0[class + 1] as usize
-        ];
+        let here = members_of_class(&first_members.0, &first_members.1, class as usize);
+        let there = members_of_class(&second_members.0, &second_members.1, class as usize);
         if here.len() < 2 {
             continue;
         }
 
-        let node = here[0] as usize;
-        let isolated = first.degree(node, NodeSide::Left) == 0
-            && first.degree(node, NodeSide::Right) == 0;
-        if !isolated {
-            continue;
-        }
-
-        // Every member must have the same sequence, up to reverse complement. The colors alone
-        // would not be enough, as they are hashes.
-        let sequence = first.sequence(node).to_vec();
-        let same = |other: &[u8]| -> bool {
-            other == sequence || hashing::equals_reverse_complement(&sequence, other)
+        // We check all nodes in the class to avoid hash collisions.
+        // This is a bit redundant, but isolated nodes tend to be unique unaligned contigs.
+        let expected_sequence = first.sequence(here[0] as usize);
+        let sequence_matches = |seq: &[u8]| -> bool {
+            seq == expected_sequence.as_ref() || hashing::equals_reverse_complement(&expected_sequence, seq)
         };
-        *flag = here.iter().all(|&n| same(&first.sequence(n as usize)))
-            && there.iter().all(|&n| same(&second.sequence(n as usize)));
+        *flag = true;
+        for (&first_node, &second_node) in here.iter().zip(there.iter()) {
+            if first.degree(first_node as usize, NodeSide::Left) != 0 || first.degree(first_node as usize, NodeSide::Right) != 0 {
+                *flag = false;
+                break;
+            }
+            if second.degree(second_node as usize, NodeSide::Left) != 0 || second.degree(second_node as usize, NodeSide::Right) != 0 {
+                *flag = false;
+                break;
+            }
+            if !sequence_matches(&first.sequence(first_node as usize)) {
+                *flag = false;
+                break;
+            }
+            if !sequence_matches(&second.sequence(second_node as usize)) {
+                *flag = false;
+                break;
+            }
+        }
     }
 
     result
