@@ -54,6 +54,10 @@ fn rebuild<T: Topology>(source: &T) -> GraphStr {
     result
 }
 
+fn stable_name_of<G: Graph>(graph: &G) -> String {
+    crate::stable_name(graph)
+}
+
 //-----------------------------------------------------------------------------
 
 #[test]
@@ -70,20 +74,6 @@ fn indexed_graph_round_trip() {
         // A second round trip through `from_topology` must also be stable.
         let again = IndexedGraph::from_topology(&indexed);
         assert_eq!(again, indexed, "from_topology is not idempotent for {}", filename);
-    }
-}
-
-#[test]
-fn gbz_topology_round_trip() {
-    for filename in ["example.gbz", "translation.gbz", "micb-kir3dl1.gbz"] {
-        let gbz = gbz_graph(filename);
-        let topology = GbzTopology::new(&gbz).unwrap();
-        let expected = GBZStr { graph: gbz.clone() };
-        assert_eq!(topology.statistics(), expected.statistics(), "Wrong statistics for {}", filename);
-        assert_eq!(
-            stable_name_of(&rebuild(&topology)), crate::stable_name(&expected),
-            "GbzTopology round trip changed the graph for {}", filename
-        );
     }
 }
 
@@ -274,6 +264,7 @@ fn subgraph_self_loops() {
 
 #[test]
 fn subgraph_duplicate_names() {
+    // TODO: Ideally we would like to check for duplicate node names and return an error.
     // `IndexedGraph` does not check the names, so a duplicate must not pass as two distinct nodes.
     let mut duplicates = IndexedGraph::new();
     duplicates.add_node(b"1", b"GAT");
@@ -354,12 +345,6 @@ fn subgraph_permuted() {
         assert!(!is_subgraph(&permuted, &graph), "A permuted graph is a subgraph with seed {}", seed);
         assert!(!is_subgraph(&graph, &permuted), "A graph is a subgraph of a permutation with seed {}", seed);
     }
-}
-
-//-----------------------------------------------------------------------------
-
-fn stable_name_of<G: Graph>(graph: &G) -> String {
-    crate::stable_name(graph)
 }
 
 //-----------------------------------------------------------------------------

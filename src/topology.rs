@@ -1,27 +1,13 @@
-//! Structural views of bidirected sequence graphs.
+//! Graph structures for isomorphism algorithms.
 //!
-//! The [`Graph`](crate::Graph) trait is oriented towards building a graph and serializing it in the
-//! canonical GFA format. It cannot answer topological queries, such as listing the neighbors of a
-//! node. The [`Topology`] trait in this module provides that view.
+//! To simplify the algorithms, we refer to the nodes using integers `0..nodes`, regardless of their identifiers.
+//! The underlying graph could be [`GBZ`], a GFA graph, or a unitig graph derived from either.
 //!
-//! A bidirected sequence graph is interpreted as an undirected graph over node sides.
-//! Each node pairs its left side with its right side, and an edge `(v, o1) -> (w, o2)` joins side
-//! [`support::exit_side`]`(o1)` of `v` to side [`support::entry_side`]`(o2)` of `w`.
-//! Because the reverse edge `(w, flip(o2)) -> (v, flip(o1))` yields the same unordered pair of
-//! sides, a bidirected edge is exactly an undirected edge over node sides.
-//!
-//! The module also provides [`is_subgraph`], which tests whether all nodes and edges of one graph
-//! are present in another. Unlike the questions in [`crate::isomorphism`], that relationship
-//! depends on the node identifiers.
-//!
-//! Nodes are identified by dense indexes in `0..nodes()`. Node identifiers in the original graph
-//! may be sparse, and mapping between the two is the responsibility of the view, not of the
-//! algorithms using it.
-//!
-//! Note that the integer / string identifier distinction made by [`GBZInt`](crate::graph::GBZInt)
-//! and [`GBZStr`](crate::graph::GBZStr) exists only to choose a canonical order for hashing.
-//! Topological queries do not depend on the order, so there is a single GBZ view here.
+//! The primary interface is trait [`Topology`].
+//! We implement it for [`IndexedGraph`] (a graph built from a GFA file) and [`GbzTopology`] (a wrapper over [`GBZ`]).
+//! See [`crate::unitigs`] for the unitig graph and [`crate::graph`] for the trait used in stable graph name computation.
 
+use crate::MAX_NODES;
 use crate::graph::{GraphInt, GraphStr};
 
 use gbz::{GBZ, NodeSide, Orientation};
@@ -38,49 +24,31 @@ mod tests;
 
 //-----------------------------------------------------------------------------
 
-/// The maximum number of nodes in a [`Topology`].
-///
-/// Node sides are encoded as `2 * index + side` in a `u32` in some algorithms, which limits the
-/// number of nodes to `2^31`.
-pub const MAX_NODES: usize = 1 << 31;
-
-/// A bidirected sequence graph that supports topological queries.
+/// A bidirected sequence graph with edges connecting node sides.
 ///
 /// Nodes are identified by dense indexes in `0..self.nodes()`.
+/// The graph may contain at most [`MAX_NODES`] nodes.
 /// Methods taking a node index panic if the index is out of bounds.
 ///
 /// # Contract
 ///
 /// Implementations must satisfy the following:
 ///
+/// * Each node has a distinct name.
+/// * Neighbor lists are symmetric and contain no duplicates.
 /// * Neighbor lists contain no duplicates.
-/// * The neighbor lists are symmetric: if `(w, t)` is a neighbor of side `s` of `v`, then `(v, s)`
-///   is a neighbor of side `t` of `w`.
-/// * A side self-loop (edge `(v, +) -> (v, -)` or `(v, -) -> (v, +)`) appears exactly once, in the
-///   neighbor list of that side only.
 /// * [`Topology::degree`] agrees with the number of items yielded by [`Topology::neighbors`].
 /// * The results are stable for the lifetime of the object.
-///
-/// Because duplicate neighbors are not allowed, the graph has no parallel edges. This matches the
-/// canonical GFA format, where duplicate `L` lines are ignored, and the behavior of
-/// [`NodeInt::finalize`](crate::graph::NodeInt::finalize).
 pub trait Topology {
     /// Returns the number of nodes in the graph.
     fn nodes(&self) -> usize;
 
-    /// Returns the number of edges in the graph.
+    /// Returns the number of distinct edges in the graph.
     ///
-    /// This counts canonical edges, as in [`Graph::statistics`](crate::Graph::statistics), which is
-    /// the same as the number of distinct unordered pairs of node sides.
-    ///
-    /// Note that this is not `sum_of_degrees / 2`. A self-loop `(v, +) -> (v, -)` is its own
-    /// reverse and appears in one neighbor list rather than two, so that formula undercounts the
-    /// edges by one half for every such loop.
+    /// Note that this is not `sum_of_degrees / 2`, as there can be self-loops connecting a node side to itself.
     fn edges(&self) -> usize;
 
     /// Returns the sequence of the node with the given index.
-    ///
-    /// The sequence is borrowed when the implementation stores it contiguously.
     fn sequence(&self, node: usize) -> Cow<'_, [u8]>;
 
     /// Returns the length of the sequence of the node with the given index.
@@ -95,19 +63,20 @@ pub trait Topology {
     /// The order is unspecified.
     fn neighbors(&self, node: usize, side: NodeSide) -> impl Iterator<Item = (usize, NodeSide)>;
 
-    /// Returns the name of the node with the given index, as in the original graph.
+    /// Returns the name (original identifier) of the node with the given index.
     fn node_name(&self, node: usize) -> Vec<u8>;
 
+    // FIXME: This should return a struct.
     /// Returns the number of nodes, the number of edges, and total sequence length in the graph.
     ///
-    /// The values are the same as in [`Graph::statistics`](crate::Graph::statistics) for the same
-    /// graph.
+    /// These must match [`Graph::statistics`](crate::Graph::statistics) for the same graph.
     fn statistics(&self) -> (usize, usize, usize) {
+        let nodes = self.nodes();
         let mut seq_len = 0;
-        for node in 0..self.nodes() {
+        for node in 0..nodes {
             seq_len += self.sequence_len(node);
         }
-        (self.nodes(), self.edges(), seq_len)
+        (nodes, self.edges(), seq_len)
     }
 }
 
@@ -115,13 +84,9 @@ pub trait Topology {
 
 /// Returns `true` if the first graph is a subgraph of the second graph.
 ///
-/// Every node of the subgraph must be a node of the supergraph with the same name and the same
-/// sequence, and every edge of the subgraph must be an edge of the supergraph. This is containment
-/// of labeled graphs rather than a subgraph isomorphism test: the node names are compared as byte
-/// strings, so the two graphs must agree on the identifiers. Every graph is a subgraph of itself.
-///
-/// Note that [`crate::isomorphism`] answers the opposite question. Isomorphism does not depend on
-/// the node identifiers at all, while this relationship is all about them.
+/// Two nodes are considered the same if they have the same name and the same sequence.
+/// Node indexes are technical artifacts of the given [`Topology`].
+/// Note that this also accepts the case where the graphs are identical.
 ///
 /// # Examples
 ///
@@ -150,19 +115,16 @@ pub fn is_subgraph<A: Topology, B: Topology>(subgraph: &A, supergraph: &B) -> bo
         return false;
     }
 
-    // Index the names in the smaller graph and find the image of each node by scanning the larger
-    // one. Duplicate names in the subgraph leave some nodes without an image, which the counter
-    // catches.
-    let mut names: HashMap<Vec<u8>, usize> = HashMap::with_capacity(subgraph.nodes());
+    // Create a mapping from node indexes in the subgraph to their indexes in the supergraph.
+    let mut index_in_subgraph: HashMap<Vec<u8>, usize> = HashMap::with_capacity(subgraph.nodes());
     for node in 0..subgraph.nodes() {
-        names.insert(subgraph.node_name(node), node);
+        index_in_subgraph.insert(subgraph.node_name(node), node);
     }
-    let mut image = vec![usize::MAX; subgraph.nodes()];
+    let mut subgraph_to_supergraph = vec![usize::MAX; subgraph.nodes()];
     let mut matched = 0;
     for node in 0..supergraph.nodes() {
-        if let Some(&source) = names.get(&supergraph.node_name(node))
-            && image[source] == usize::MAX {
-            image[source] = node;
+        if let Some(&source) = index_in_subgraph.get(&supergraph.node_name(node)) && subgraph_to_supergraph[source] == usize::MAX {
+            subgraph_to_supergraph[source] = node;
             matched += 1;
         }
     }
@@ -170,34 +132,22 @@ pub fn is_subgraph<A: Topology, B: Topology>(subgraph: &A, supergraph: &B) -> bo
         return false;
     }
 
-    for (node, &target) in image.iter().enumerate() {
-        if subgraph.sequence_len(node) != supergraph.sequence_len(target) {
-            return false;
-        }
+    // Check that the sequences match.
+    for (node, &target) in subgraph_to_supergraph.iter().enumerate() {
         if subgraph.sequence(node).as_ref() != supergraph.sequence(target).as_ref() {
             return false;
         }
     }
 
-    // Visiting each side of each node covers every edge, because the neighbor lists are symmetric.
-    // A side self-loop needs no special case: it is listed once in both graphs, on the same side.
-    // The neighbor lists are sorted rather than scanned, as a hub node would make the scan
-    // quadratic. One buffer is reused for the whole call.
-    let mut buffer: Vec<(usize, NodeSide)> = Vec::new();
+    // Check that all subgraph edges exist in the supergraph.
+    let mut supergraph_edges: Vec<(usize, NodeSide)> = Vec::new();
     for node in 0..subgraph.nodes() {
         for side in [NodeSide::Left, NodeSide::Right] {
-            let degree = subgraph.degree(node, side);
-            if degree == 0 {
-                continue;
-            }
-            if degree > supergraph.degree(image[node], side) {
-                return false;
-            }
-            buffer.clear();
-            buffer.extend(supergraph.neighbors(image[node], side));
-            buffer.sort_unstable();
+            supergraph_edges.clear();
+            supergraph_edges.extend(supergraph.neighbors(subgraph_to_supergraph[node], side));
+            supergraph_edges.sort_unstable();
             for (neighbor, neighbor_side) in subgraph.neighbors(node, side) {
-                if buffer.binary_search(&(image[neighbor], neighbor_side)).is_err() {
+                if supergraph_edges.binary_search(&(subgraph_to_supergraph[neighbor], neighbor_side)).is_err() {
                     return false;
                 }
             }
@@ -206,8 +156,6 @@ pub fn is_subgraph<A: Topology, B: Topology>(subgraph: &A, supergraph: &B) -> bo
 
     true
 }
-
-//-----------------------------------------------------------------------------
 
 // Returns the unordered pair of encoded node sides corresponding to the given edge.
 //
@@ -222,15 +170,7 @@ fn side_pair(
 
 //-----------------------------------------------------------------------------
 
-/// An owned bidirected sequence graph with dense node indexes and full adjacency information.
-///
-/// [`GraphInt`] and [`GraphStr`] store only canonical edges, on the endpoint that comes first in
-/// the sorting order. This type builds the adjacency information for both endpoints, which the
-/// topological queries need.
-///
-/// Node names are stored as byte strings. This is simpler than mirroring the integer / string
-/// split in [`crate::graph`], at the cost of some memory. Graphs large enough for that to matter
-/// are normally GBZ graphs, which use [`GbzTopology`] and format the names on demand.
+/// A graph that can be built incrementally and queried using the [`Topology`] trait.
 ///
 /// # Examples
 ///
@@ -253,16 +193,18 @@ fn side_pair(
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IndexedGraph {
-    // Concatenated node names, with starting offsets of length `nodes + 1`.
+    // Concatenated node names.
     names: Vec<u8>,
+    // Starting offset of each node name, with a sentinel at the end.
     name_offsets: Vec<usize>,
-    // Concatenated sequences, with starting offsets of length `nodes + 1`.
+    // Concatenated sequences.
     sequences: Vec<u8>,
+    // Starting offset of each sequence, with a sentinel at the end.
     sequence_offsets: Vec<usize>,
-    // Adjacency in CSR format over node sides, with offsets of length `2 * nodes + 1`.
-    // The neighbors are stored as encoded node sides.
-    edge_offsets: Vec<usize>,
+    // Concatenated adjacency lists for each node side, using the GBWT encoding.
     neighbors: Vec<u32>,
+    // Starting offset of each adjacency list, with a sentinel at the end.
+    edge_offsets: Vec<usize>,
     // Canonical edges as unordered pairs of encoded node sides, before finalization.
     pending: Vec<(u32, u32)>,
     edge_count: usize,
@@ -276,15 +218,16 @@ impl IndexedGraph {
             name_offsets: vec![0],
             sequences: Vec::new(),
             sequence_offsets: vec![0],
-            // Kept consistent with `finalize` so that an empty graph is usable as it is.
-            edge_offsets: vec![0],
             neighbors: Vec::new(),
+            edge_offsets: vec![0],
             pending: Vec::new(),
             edge_count: 0,
         }
     }
 
     /// Adds a node to the graph and returns its index.
+    ///
+    /// This does not check for duplicate node names.
     pub fn add_node(&mut self, name: &[u8], sequence: &[u8]) -> usize {
         let index = self.nodes();
         self.names.extend_from_slice(name);
@@ -297,13 +240,15 @@ impl IndexedGraph {
     /// Adds an edge between the given nodes.
     ///
     /// The nodes must already exist. Duplicate edges are ignored.
-    /// The adjacency information is not available until [`IndexedGraph::finalize`] is called.
+    /// Adjacency information is not available until [`IndexedGraph::finalize`] is called.
     pub fn add_edge(&mut self, from: usize, from_o: Orientation, to: usize, to_o: Orientation) {
         let (source, dest) = side_pair(from, from_o, to, to_o);
         self.pending.push((source as u32, dest as u32));
     }
 
     /// Sorts and deduplicates the edges and builds the adjacency information.
+    ///
+    /// Discards all edges from previous calls.
     pub fn finalize(&mut self) {
         self.pending.sort_unstable();
         self.pending.dedup();
@@ -323,7 +268,7 @@ impl IndexedGraph {
         }
 
         // Fill in the neighbors.
-        let mut next = self.edge_offsets.clone();
+        let mut next = self.edge_offsets.clone(); // Next available position for an edge adjacent to the given node side.
         self.neighbors = vec![0; self.edge_offsets[sides]];
         for &(source, dest) in self.pending.iter() {
             self.neighbors[next[source as usize]] = dest;
@@ -337,17 +282,17 @@ impl IndexedGraph {
         self.pending = Vec::new();
     }
 
-    /// Builds an owned indexed graph from any topology.
-    // Seam for unitig-level isomorphism: the unitig view writes into this.
+    /// Converts any graph implementing [`Topology`] into an `IndexedGraph`.
     pub fn from_topology<T: Topology>(source: &T) -> Self {
         let mut result = Self::new();
         for node in 0..source.nodes() {
+            // No need to keep track of node indexes, as `Topology` uses them in the same way.
             result.add_node(&source.node_name(node), &source.sequence(node));
         }
         for node in 0..source.nodes() {
             for side in [NodeSide::Left, NodeSide::Right] {
+                let source_side = support::encode_node_side(node, side);
                 for (neighbor, neighbor_side) in source.neighbors(node, side) {
-                    let source_side = support::encode_node_side(node, side);
                     let dest_side = support::encode_node_side(neighbor, neighbor_side);
                     // Add each edge once; `finalize` deduplicates the rest.
                     if source_side <= dest_side {
@@ -403,15 +348,15 @@ impl Topology for IndexedGraph {
 impl From<&GraphInt> for IndexedGraph {
     fn from(source: &GraphInt) -> Self {
         let mut result = Self::new();
-        let mut indexes = std::collections::HashMap::new();
+        let mut id_to_index = std::collections::HashMap::new();
         for (index, (id, node)) in source.nodes.iter().enumerate() {
             result.add_node(id.to_string().as_bytes(), &node.sequence);
-            indexes.insert(*id, index);
+            id_to_index.insert(*id, index);
         }
         for (id, node) in source.nodes.iter() {
-            let from = indexes[id];
+            let from = id_to_index[id];
             for (from_o, dest_id, dest_o) in node.edges.iter() {
-                result.add_edge(from, *from_o, indexes[dest_id], *dest_o);
+                result.add_edge(from, *from_o, id_to_index[dest_id], *dest_o);
             }
         }
         result.finalize();
@@ -422,15 +367,15 @@ impl From<&GraphInt> for IndexedGraph {
 impl From<&GraphStr> for IndexedGraph {
     fn from(source: &GraphStr) -> Self {
         let mut result = Self::new();
-        let mut indexes = std::collections::HashMap::new();
+        let mut name_to_index = std::collections::HashMap::new();
         for (index, (name, node)) in source.nodes.iter().enumerate() {
             result.add_node(name, &node.sequence);
-            indexes.insert(name.clone(), index);
+            name_to_index.insert(name.clone(), index);
         }
         for (name, node) in source.nodes.iter() {
-            let from = indexes[name];
+            let from = name_to_index[name];
             for (from_o, dest_name, dest_o) in node.edges.iter() {
-                result.add_edge(from, *from_o, indexes[dest_name], *dest_o);
+                result.add_edge(from, *from_o, name_to_index[dest_name], *dest_o);
             }
         }
         result.finalize();
@@ -453,11 +398,9 @@ enum NodeIndex {
     Sparse(BitVector),
 }
 
-/// A topological view of a GBZ graph.
+/// A [`Topology`] wrapper over [`GBZ`].
 ///
-/// The view borrows the graph and does not copy the adjacency information. When the node
-/// identifiers are `min_node()..=max_node()` without gaps, which is the usual case, the view needs
-/// no auxiliary structures at all.
+/// We cannot implement the trait directly for [`GBZ`], because we need a mapping from node identifiers to indexes.
 ///
 /// # Examples
 ///
@@ -485,10 +428,11 @@ pub struct GbzTopology<'a> {
 impl<'a> GbzTopology<'a> {
     /// Creates a topological view of the given graph.
     ///
-    /// Returns an error if the graph has too many nodes (see [`MAX_NODES`]).
+    /// Returns an error if the graph has more than [`MAX_NODES`] nodes.
     pub fn new(graph: &'a GBZ) -> Result<Self, String> {
         let node_count = graph.nodes();
         if node_count > MAX_NODES {
+            // This should not happen, as GBZ graphs currently have the same node limit.
             return Err(format!("The graph has {} nodes, but at most {} are supported", node_count, MAX_NODES));
         }
 
@@ -511,7 +455,7 @@ impl<'a> GbzTopology<'a> {
             }
         };
 
-        let mut result = GbzTopology { graph, offset, index, node_count, edge_count: 0 };
+        // Cache the edge count, as GBZ does not store it directly.
         let mut edge_count = 0;
         for id in graph.node_iter() {
             for o in [Orientation::Forward, Orientation::Reverse] {
@@ -522,8 +466,8 @@ impl<'a> GbzTopology<'a> {
                 }
             }
         }
-        result.edge_count = edge_count;
 
+        let result = GbzTopology { graph, offset, index, node_count, edge_count };
         Ok(result)
     }
 

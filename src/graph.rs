@@ -16,6 +16,9 @@
 //! Each node is followed by its canonical edges in sorted order.
 //! Edge lines do not include the overlap field, as pangenome graphs do not use it.
 //! Header, path, and walk lines are not included in the hash, and neither are optional fields.
+//!
+//! The [`Graph`] trait is used for stable name computation.
+//! See [`crate::topology`] for the structures used in isomorphism algorithms.
 
 use gbz::{GBZ, Orientation};
 use gbz::support;
@@ -49,6 +52,7 @@ pub trait Graph {
     /// Returns an error if some nodes required by the edges are missing.
     fn finalize(&mut self) -> Result<(), String>;
 
+    // FIXME: This should return a struct.
     /// Returns the number of nodes, the number of edges, and total sequence length in the graph.
     fn statistics(&self) -> (usize, usize, usize);
 

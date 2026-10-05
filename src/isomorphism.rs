@@ -137,6 +137,7 @@ impl NodeMapping {
         self.mapping.is_empty()
     }
 
+    // FIXME: support::decode_node
     /// Returns the image of the given node and its relative orientation.
     pub fn get(&self, node: usize) -> (usize, Orientation) {
         let encoded = self.mapping[node] as usize;
@@ -144,6 +145,7 @@ impl NodeMapping {
         (encoded / 2, orientation)
     }
 
+    // FIXME: support::decode_node
     /// Returns an iterator over the mapping as `(source, destination, orientation)`.
     pub fn iter(&self) -> impl ExactSizeIterator<Item = (usize, usize, Orientation)> {
         self.mapping.iter().enumerate().map(|(source, &encoded)| {
@@ -153,6 +155,7 @@ impl NodeMapping {
         })
     }
 
+    // FIXME: support::decode_node
     /// Returns `true` if no node maps to the reverse complement of another node.
     pub fn is_forward(&self) -> bool {
         self.mapping.iter().all(|&encoded| encoded & 1 == 0)

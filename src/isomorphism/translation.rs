@@ -56,10 +56,10 @@ impl Translation {
             let old_first_len = result.first_unitigs.len();
             let old_second_len = result.second_unitigs.len();
             result.first_unitigs.extend(
-                first.pieces(first_id).map(|piece| Self::encode(piece.node, piece.orientation))
+                first.pieces(first_id).map(|piece| crate::encode_oriented_node(piece.node, piece.orientation))
             );
             result.second_unitigs.extend(
-                second.pieces(second_id).map(|piece| Self::encode(piece.node, piece.orientation))
+                second.pieces(second_id).map(|piece| crate::encode_oriented_node(piece.node, piece.orientation))
             );
             if orientation == Orientation::Reverse {
                 Self::reverse(&mut result.second_unitigs[old_second_len..]);
@@ -67,8 +67,8 @@ impl Translation {
 
             // Try to ensure that we start from a forward node in the first graph.
             let walk = &result.first_unitigs[old_first_len..];
-            let ends_in_reverse = Self::decode(walk[walk.len() - 1]).1 == Orientation::Reverse;
-            if Self::decode(walk[0]).1 == Orientation::Reverse && ends_in_reverse {
+            let ends_in_reverse = crate::decode_oriented_node(walk[walk.len() - 1]).1 == Orientation::Reverse;
+            if crate::decode_oriented_node(walk[0]).1 == Orientation::Reverse && ends_in_reverse {
                 Self::reverse(&mut result.first_unitigs[old_first_len..]);
                 Self::reverse(&mut result.second_unitigs[old_second_len..]);
             }
@@ -106,17 +106,7 @@ impl Translation {
         nodes: &[u32], offsets: &[u32], index: usize
     ) -> impl ExactSizeIterator<Item = (usize, Orientation)> {
         let range = offsets[index] as usize..offsets[index + 1] as usize;
-        nodes[range].iter().map(|&encoded| Self::decode(encoded))
-    }
-
-    // A wrapper around `support::encode_node`.
-    fn encode(node: usize, orientation: Orientation) -> u32 {
-        support::encode_node(node, orientation) as u32
-    }
-
-    // A wrapper around `support::decode_node`.
-    fn decode(encoded: u32) -> (usize, Orientation) {
-        support::decode_node(encoded as usize)
+        nodes[range].iter().map(|&encoded| crate::decode_oriented_node(encoded))
     }
 
     // Reverses the walk.

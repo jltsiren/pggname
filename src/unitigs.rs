@@ -333,11 +333,13 @@ pub(crate) fn append_piece<T: Topology>(graph: &T, node: usize, orientation: Ori
     }
 }
 
+// FIXME: this is support::encode_node, and there is already one wrapper in the crate
 // Encodes a piece as `2 * node + orientation`.
 fn encode_piece(node: usize, orientation: Orientation) -> u32 {
     (2 * node + (orientation as usize)) as u32
 }
 
+// FIXME: see above
 // Decodes a piece.
 fn decode_piece(encoded: u32) -> (usize, Orientation) {
     let encoded = encoded as usize;

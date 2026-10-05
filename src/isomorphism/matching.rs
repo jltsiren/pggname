@@ -250,7 +250,7 @@ impl<'a, A: Topology, B: Topology> Matcher<'a, A, B> {
     fn next_choice(&mut self) -> Choice {
         // Prefer a site next to an already matched pair: such groups are small.
         while self.head < self.pending.len() {
-            let (node, side) = decode_site(self.pending[self.head]);
+            let (node, side) = crate::decode_node_side(self.pending[self.head]);
             let Some((image, orientation)) = self.image_of(node) else {
                 self.head += 1;
                 continue;
@@ -330,7 +330,7 @@ impl<'a, A: Topology, B: Topology> Matcher<'a, A, B> {
                 match self.site_group(node as usize, side, image, image_side)? {
                     None => {},
                     // Re-derive the group later; it may have shrunk by then.
-                    Some(_) => self.pending.push(encode_site(node as usize, side)),
+                    Some(_) => self.pending.push(crate::encode_node_side(node as usize, side)),
                 }
             }
         }
@@ -410,6 +410,7 @@ impl<'a, A: Topology, B: Topology> Matcher<'a, A, B> {
     // Checks that the assignment does not conflict with earlier assignments.
     // Checks that the sequences and degrees match.
     fn assign(&mut self, node: usize, image: usize, orientation: Orientation) -> Result<(), ()> {
+        // FIXME: support::encode_node
         let encoded = (2 * image + (orientation as usize)) as u32;
 
         if self.image[node] != NONE {
@@ -475,6 +476,7 @@ impl<'a, A: Topology, B: Topology> Matcher<'a, A, B> {
         if encoded == NONE {
             return None;
         }
+        // FIXME: support::decode_node
         let encoded = encoded as usize;
         let orientation = if encoded & 1 == 0 { Orientation::Forward } else { Orientation::Reverse };
         Some((encoded / 2, orientation))
@@ -506,18 +508,6 @@ fn members_of_class<'a>(offsets: &[u32], members: &'a [u32], class: usize) -> &'
 }
 
 //-----------------------------------------------------------------------------
-
-// Encodes a site as `2 * node + side`.
-fn encode_site(node: usize, side: NodeSide) -> u32 {
-    (2 * node + (side as usize)) as u32
-}
-
-// Decodes a site.
-fn decode_site(encoded: u32) -> (usize, NodeSide) {
-    let encoded = encoded as usize;
-    let side = if encoded & 1 == 0 { NodeSide::Left } else { NodeSide::Right };
-    (encoded / 2, side)
-}
 
 // Returns the members of each class as (offsets, members).
 // Class `i` contains nodes `members[offsets[i]..offsets[i + 1]]`.

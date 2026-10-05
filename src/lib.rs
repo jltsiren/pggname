@@ -22,3 +22,40 @@ mod test_utils;
 pub use algorithms::stable_name;
 pub use graph::Graph;
 pub use topology::Topology;
+
+//-----------------------------------------------------------------------------
+
+use gbz::support::{self, Orientation, NodeSide};
+
+/// Maximum number of nodes in the graph for subgraph and isomorphism algorithms.
+pub const MAX_NODES: usize = 1 << 31;
+
+/// A wrapper around [`support::encode_node`].
+///
+/// Some algorithms use the GBWT encoding for oriented nodes but store them as [`u32`] to save space.
+pub fn encode_oriented_node(node: usize, orientation: Orientation) -> u32 {
+    support::encode_node(node, orientation) as u32
+}
+
+/// A wrapper around [`support::decode_node`].
+///
+/// Some algorithms use the GBWT encoding for oriented nodes but store them as [`u32`] to save space.
+pub fn decode_oriented_node(encoded: u32) -> (usize, Orientation) {
+    support::decode_node(encoded as usize)
+}
+
+/// A wrapper around [`support::encode_node_side`].
+///
+/// Some algorithms use the GBWT encoding for node sides but store them as [`u32`] to save space.
+pub fn encode_node_side(node: usize, side: NodeSide) -> u32 {
+    support::encode_node_side(node, side) as u32
+}
+
+/// A wrapper around [`support::decode_node_side`].
+///
+/// Some algorithms use the GBWT encoding for node sides but store them as [`u32`] to save space.
+pub fn decode_node_side(encoded: u32) -> (usize, NodeSide) {
+    support::decode_node_side(encoded as usize)
+}
+
+//-----------------------------------------------------------------------------

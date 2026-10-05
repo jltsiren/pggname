@@ -90,14 +90,12 @@ pub fn hash<D: Digest, G: Graph>(graph: &G) -> String
 ///
 /// ```
 /// use pggname::Graph;
-/// use pggname::graph::GBZInt;
 /// use gbz::GBZ;
 /// use gbz::support;
 /// use simple_sds::serialize;
 ///
 /// let filename = support::get_test_data("example.gbz");
-/// let gbz: GBZ = serialize::load_from(&filename).unwrap();
-/// let graph = GBZInt { graph: gbz };
+/// let graph: GBZ = serialize::load_from(&filename).unwrap();
 /// let hash = pggname::stable_name(&graph);
 /// assert_eq!(hash, "81b160c814182a12aaf95fd458e191590e95fb13c71e1c2f61ff827f605cf970");
 /// ```
