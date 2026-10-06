@@ -14,7 +14,7 @@ use gbz::support;
 ///
 /// Each unitig is represented as a sequence of oriented nodes.
 /// The orientations of the unitigs are chosen so that the unitigs spell the same sequence in both graphs.
-/// If possible, each unitig starts from a forward node in the first graph.
+/// The walk in the first graph is given in the canonical orientation (see [`support::path_is_canonical`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Translation {
     // Concatenated walks for the unitigs in the first graph, using GBWT handles for oriented nodes.
@@ -53,23 +53,10 @@ impl Translation {
 
         for first_id in 0..first.len() {
             let (second_id, orientation) = mapping.get(first_id);
-            let old_first_len = result.first_unitigs.len();
             let old_second_len = result.second_unitigs.len();
-            result.first_unitigs.extend(
-                first.pieces(first_id).map(|piece| crate::encode_oriented_node(piece.node, piece.orientation))
-            );
-            result.second_unitigs.extend(
-                second.pieces(second_id).map(|piece| crate::encode_oriented_node(piece.node, piece.orientation))
-            );
+            result.first_unitigs.extend(first.unitig(first_id));
+            result.second_unitigs.extend(second.unitig(second_id));
             if orientation == Orientation::Reverse {
-                Self::reverse(&mut result.second_unitigs[old_second_len..]);
-            }
-
-            // Try to ensure that we start from a forward node in the first graph.
-            let walk = &result.first_unitigs[old_first_len..];
-            let ends_in_reverse = crate::decode_oriented_node(walk[walk.len() - 1]).1 == Orientation::Reverse;
-            if crate::decode_oriented_node(walk[0]).1 == Orientation::Reverse && ends_in_reverse {
-                Self::reverse(&mut result.first_unitigs[old_first_len..]);
                 Self::reverse(&mut result.second_unitigs[old_second_len..]);
             }
 
@@ -182,7 +169,7 @@ fn check_unitig<T: Topology>(
                 return Err(Mismatch::Structure);
             }
         }
-        unitigs::append_piece(graph, node, orientation, sequence);
+        unitigs::append_sequence(graph, node, orientation, sequence);
         previous = Some((node, orientation));
     }
 

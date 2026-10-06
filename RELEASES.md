@@ -36,7 +36,7 @@ Initial release of the stable graph name scheme. The reference implementation su
 * Switch to crates.io versions of dependencies, if necessary.
 * Update `RELEASES.md`.
 * Run `cargo clippy`.
-* Run tests with `cargo test`.
+* Run tests with `cargo test` and `cargo test -- --ignored`.
 * Build documentation with `cargo doc`.
 * Build the optimized version with `cargo build --release`.
 * Commit the final changes for the release.

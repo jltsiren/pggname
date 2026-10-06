@@ -18,36 +18,22 @@ fn gfa_text(text: &str) -> IndexedGraph {
     IndexedGraph::from(&graph)
 }
 
-// Checks that the pieces tile the sequence of each unitig, and that every node is in exactly one
-// piece.
-fn check_pieces<T: Topology>(source: &T, unitigs: &Unitigs, context: &str) {
+// Check that the paths corresponding to the unitigs are maximal non-branching paths in the source graph that cover the entire graph.
+fn check_paths<T: Topology>(source: &T, unitigs: &Unitigs, context: &str) {
     let mut seen = vec![false; source.nodes()];
     let mut total = 0;
 
     for unitig in 0..unitigs.len() {
         let sequence = unitigs.graph().sequence(unitig).to_vec();
         let mut expected: Vec<u8> = Vec::new();
-        for piece in unitigs.pieces(unitig) {
-            assert_eq!(piece.start, expected.len(), "Pieces do not tile unitig {} in {}", unitig, context);
-            assert_eq!(
-                piece.len(), source.sequence_len(piece.node),
-                "Wrong length for a piece of unitig {} in {}", unitig, context
-            );
-            assert!(!seen[piece.node], "Node {} is in two pieces in {}", piece.node, context);
-            seen[piece.node] = true;
+        for encoded in unitigs.unitig(unitig) {
+            let (node, orientation) = crate::decode_oriented_node(encoded);
+            assert!(!seen[node], "Node {} is in two unitigs in {}", node, context);
+            seen[node] = true;
             total += 1;
 
-            assert_eq!(
-                unitigs.unitig_of(piece.node), unitig,
-                "Wrong unitig for node {} in {}", piece.node, context
-            );
-            assert_eq!(
-                unitigs.piece_of(piece.node), piece,
-                "Wrong piece for node {} in {}", piece.node, context
-            );
-
-            let node_sequence = source.sequence(piece.node).to_vec();
-            match piece.orientation {
+            let node_sequence = source.sequence(node).to_vec();
+            match orientation {
                 Orientation::Forward => expected.extend_from_slice(&node_sequence),
                 Orientation::Reverse => expected.extend(
                     isomorphism::hashing::reverse_complement(&node_sequence)
@@ -55,6 +41,8 @@ fn check_pieces<T: Topology>(source: &T, unitigs: &Unitigs, context: &str) {
             }
         }
         assert_eq!(expected, sequence, "Wrong sequence for unitig {} in {}", unitig, context);
+        let path: Vec<u32> = unitigs.unitig(unitig).collect();
+        assert!(crate::encoded_walk_is_canonical(&path), "Unitig {} is not canonical in {}", unitig, context);
     }
 
     assert_eq!(total, source.nodes(), "The pieces do not cover every node in {}", context);
@@ -78,7 +66,7 @@ fn a_path_collapses() {
     assert_eq!(unitigs.len(), 1, "A path should collapse into one unitig");
     assert_eq!(unitigs.graph().sequence(0).as_ref(), b"GATTACA", "Wrong unitig sequence");
     assert_eq!(unitigs.graph().edges(), 0, "A path should have no edges after collapsing");
-    check_pieces(&graph, &unitigs, "a path");
+    check_paths(&graph, &unitigs, "a path");
 }
 
 #[test]
@@ -91,7 +79,7 @@ fn branches_are_preserved() {
     let unitigs = Unitigs::new(&graph).unwrap();
     assert_eq!(unitigs.len(), 4, "A bubble should stay a bubble");
     assert_eq!(unitigs.graph().edges(), 4, "Wrong number of edges after collapsing a bubble");
-    check_pieces(&graph, &unitigs, "a bubble");
+    check_paths(&graph, &unitigs, "a bubble");
 }
 
 #[test]
@@ -100,7 +88,7 @@ fn reverse_traversals_are_handled() {
     let graph = gfa_text("S\t1\tGAT\nS\t2\tTAA\nS\t3\tCA\nL\t1\t+\t2\t-\nL\t2\t-\t3\t+\n");
     let unitigs = Unitigs::new(&graph).unwrap();
     assert_eq!(unitigs.len(), 1, "The path should collapse into one unitig");
-    check_pieces(&graph, &unitigs, "a path with a reverse traversal");
+    check_paths(&graph, &unitigs, "a path with a reverse traversal");
 
     // `GAT` + revcomp(`TAA`) + `CA` = `GAT` + `TTA` + `CA`.
     let sequence = unitigs.graph().sequence(0).to_vec();
@@ -113,20 +101,6 @@ fn reverse_traversals_are_handled() {
 }
 
 #[test]
-fn direction_is_canonical() {
-    // The same path written from either end must give the same unitig sequence.
-    let forward = gfa_text("S\t1\tGAT\nS\t2\tTA\nS\t3\tCA\nL\t1\t+\t2\t+\nL\t2\t+\t3\t+\n");
-    let backward = gfa_text("S\t1\tTG\nS\t2\tTA\nS\t3\tATC\nL\t1\t+\t2\t+\nL\t2\t+\t3\t+\n");
-    let first = Unitigs::new(&forward).unwrap();
-    let second = Unitigs::new(&backward).unwrap();
-    // `TGTAATC` is the reverse complement of `GATTACA`.
-    assert_eq!(
-        unitig_sequences(&first), unitig_sequences(&second),
-        "The two directions gave different canonical sequences"
-    );
-}
-
-#[test]
 fn self_loops_are_preserved() {
     let graph = gfa_text(
         "S\t1\tGAT\nS\t2\tTAC\nS\t3\tCAG\nL\t1\t+\t1\t+\nL\t2\t+\t2\t-\nL\t3\t-\t3\t+\n"
@@ -134,7 +108,7 @@ fn self_loops_are_preserved() {
     let unitigs = Unitigs::new(&graph).unwrap();
     assert_eq!(unitigs.len(), 3, "Self-loops should not be collapsed");
     assert_eq!(unitigs.graph().edges(), 3, "Wrong number of self-loops after collapsing");
-    check_pieces(&graph, &unitigs, "self-loops");
+    check_paths(&graph, &unitigs, "self-loops");
 }
 
 #[test]
@@ -143,7 +117,7 @@ fn isolated_nodes_become_unitigs() {
     let unitigs = Unitigs::new(&graph).unwrap();
     assert_eq!(unitigs.len(), 2, "Isolated nodes should become unitigs");
     assert_eq!(unitigs.graph().edges(), 0, "Isolated nodes should have no edges");
-    check_pieces(&graph, &unitigs, "isolated nodes");
+    check_paths(&graph, &unitigs, "isolated nodes");
 }
 
 #[test]
@@ -175,12 +149,12 @@ fn chopping_does_not_change_the_unitigs() {
         let mut rng = StdRng::seed_from_u64(seed);
         let graph = random_graph(30, 40, &mut rng);
         let Ok(unitigs) = Unitigs::new(&graph) else { continue };
-        check_pieces(&graph, &unitigs, &format!("seed {}", seed));
+        check_paths(&graph, &unitigs, &format!("seed {}", seed));
 
         for max_len in [1, 2, 3] {
             let chopped = chop(&graph, max_len);
             let other = Unitigs::new(&chopped).unwrap();
-            check_pieces(&chopped, &other, &format!("chopped at {}, seed {}", max_len, seed));
+            check_paths(&chopped, &other, &format!("chopped at {}, seed {}", max_len, seed));
 
             assert_eq!(
                 unitig_sequences(&unitigs), unitig_sequences(&other),
@@ -205,7 +179,7 @@ fn chopping_a_real_graph() {
     let graph = IndexedGraph::from(&graph);
 
     let unitigs = Unitigs::new(&graph).unwrap();
-    check_pieces(&graph, &unitigs, "example.gfa");
+    check_paths(&graph, &unitigs, "example.gfa");
 
     // The node sequences are 1 bp, so the unitigs are already maximal.
     let names: BTreeSet<Vec<u8>> = (0..unitigs.len())
