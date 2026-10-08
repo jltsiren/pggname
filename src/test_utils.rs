@@ -1,7 +1,4 @@
 //! Shared helpers for tests.
-//!
-//! The generators are seeded explicitly, so that a failing test can be reproduced. Every assertion
-//! built on them should include the seed in its message.
 
 use crate::isomorphism::NodeMapping;
 use crate::isomorphism::translation::Translation;
@@ -30,8 +27,8 @@ pub fn random_sequence(len: usize, rng: &mut impl Rng) -> Vec<u8> {
 
 /// Returns a random graph with the given numbers of nodes and edges.
 ///
-/// The sequences are short, so duplicates are common. This matters: if every sequence is distinct,
-/// the initial coloring solves every instance and neither refinement nor search is ever exercised.
+/// The sequences are short, so duplicates are common.
+/// The actual number of edges may be less than requested due to duplicates.
 pub fn random_graph(nodes: usize, edges: usize, rng: &mut impl Rng) -> IndexedGraph {
     let mut result = IndexedGraph::new();
     for node in 0..nodes {
@@ -49,7 +46,7 @@ pub fn random_graph(nodes: usize, edges: usize, rng: &mut impl Rng) -> IndexedGr
 
 /// Returns a random graph where every node has a distinct sequence and the graph is a path.
 ///
-/// Such a graph is rigid: it has no automorphisms, so the isomorphism is unique.
+/// Since the sequences contain As but not Ts, the path cannot spell a palindrome.
 pub fn rigid_graph(nodes: usize) -> IndexedGraph {
     let mut result = IndexedGraph::new();
     for node in 0..nodes {
@@ -127,9 +124,7 @@ pub fn permute<T: Topology>(source: &T, permutation: &[usize], flips: &[bool]) -
 
 /// Builds a copy of the graph with every node chopped into fragments of at most `max_len` bp.
 ///
-/// The fragments of a node are chained left to right in the forward orientation, so the result
-/// represents the same pangenome. It is the standard way in which two graphs can differ without
-/// being different graphs.
+/// The fragments of a node are chained left to right in the forward orientation.
 pub fn chop<T: Topology>(source: &T, max_len: usize) -> IndexedGraph {
     assert!(max_len > 0, "The fragment length must be positive");
     let mut result = IndexedGraph::new();
@@ -187,8 +182,7 @@ pub fn chop<T: Topology>(source: &T, max_len: usize) -> IndexedGraph {
 /// Returns a subgraph of the given graph.
 ///
 /// Each node is kept with probability `node_prob`, and each edge between two kept nodes with
-/// probability `edge_prob`. Node names and sequences are copied verbatim, unlike in [`permute`]
-/// and [`chop`], so the result is a subgraph in the sense of [`crate::topology::is_subgraph`].
+/// probability `edge_prob`. Node names and sequences are copied verbatim.
 pub fn random_subgraph<T: Topology>(
     source: &T, node_prob: f64, edge_prob: f64, rng: &mut impl Rng
 ) -> IndexedGraph {
@@ -241,6 +235,7 @@ pub fn mapping_of(permutation: &[usize], flips: &[bool]) -> NodeMapping {
 ///
 /// This spells out the sequence of each walk and counts the visits to each node, which is a
 /// different formulation from `verify_translation`.
+/// This does not check that the translation is based on non-branching paths.
 pub fn is_translation<A: Topology, B: Topology>(
     first: &A, second: &B, translation: &Translation
 ) -> Result<(), String> {
