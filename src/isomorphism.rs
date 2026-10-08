@@ -1,24 +1,29 @@
-//! Testing whether two pangenome graphs are isomorphic.
+//! Algorithms for testing pangenome graph isomorphism.
 //!
 //! Two graphs are isomorphic if one can be transformed into the other by renaming the nodes.
-//! More precisely, there must be a bijection between the nodes that preserves the sequences and the
-//! edges. A node may also map to the reverse complement of another node. Because flipping a node
-//! swaps its left and right sides, every edge endpoint at that node then changes orientation.
+//! After the transformation, node labels (sequences) and edges must match.
+//! Because pangenome graphs are bidirectional, the transformation may flip the orientation of a node.
 //!
-//! Note that [`stable_name`](crate::stable_name) depends on the node identifiers, while isomorphism
-//! does not. Two isomorphic graphs typically have different stable names.
+//! If two graphs are isomorphic, there is a bidirectional translation between their coordinates.
+//! See [`Translation`] for more details.
 //!
-//! # Guarantees
+//! The core algorithm is [`are_isomorphic`], which compares the graphs directly.
+//! [`are_isomorphic_unitigs`] considers unitig graphs, where maximal non-branching paths are collapsed into single nodes.
+//! It is more appropriate with pangenome graphs, where different tools have different opinions on node lengths.
+//! See [`Unitigs`] for more details.
 //!
-//! The algorithm colors the nodes by hashing isomorphism-invariant data and then searches for a
-//! mapping consistent with the colors. A positive answer is always verified against the sequences
-//! and the edges, without using any hash values, so it is never wrong. A negative answer is
-//! returned only when it follows from an exact invariant or from an exhaustive search. If neither
-//! holds, the result is [`Isomorphism::Unresolved`].
+//! # Overview
 //!
-//! Graph isomorphism is not known to be solvable in polynomial time, so an unresolved answer is a
-//! real possibility. It is rare in practice, because the sequences make most nodes easy to tell
-//! apart.
+//! The algorithm colors the nodes by hashing isomorphism-invariant data.
+//! Then it searches for a mapping consistent with the colors.
+//! A potential mapping is verified against the sequences and the edges.
+//! The algorithm returns [`Isomorphism::Isomorphic`] with a [`NodeMapping`] if the graphs are isomorphic.
+//! It returns [`Isomorphism::NotIsomorphic`] with a [`Mismatch`] if it can guarantee that the graphs are not isomorphic.
+//! If the algorithm runs out of search budget, the result is [`Isomorphism::Unresolved`].
+//! That should rarely happen with pangenome graphs, as node labels make the coloring stage very effective.
+//!
+//! When determining unitig-level isomorphism, the return value is [`UnitigIsomorphism`] instead.
+//! A positive result then includes a [`Translation`].
 
 use crate::topology::Topology;
 use crate::unitigs::Unitigs;
@@ -38,13 +43,10 @@ pub mod translation;
 pub(crate) mod coloring;
 pub(crate) mod matching;
 
+#[cfg(test)]
+mod tests;
+
 //-----------------------------------------------------------------------------
-
-/// Default number of color refinement rounds in [`Options`].
-pub const DEFAULT_REFINEMENT_ROUNDS: usize = 4;
-
-/// Default search budget in [`Options`].
-pub const DEFAULT_SEARCH_BUDGET: usize = 1 << 20;
 
 /// Options for [`are_isomorphic`].
 ///
@@ -60,27 +62,96 @@ pub const DEFAULT_SEARCH_BUDGET: usize = 1 << 20;
 pub struct Options {
     /// Maximum number of color refinement rounds.
     ///
-    /// Refinement stops early when the coloring becomes stable. More rounds make the search
-    /// smaller, but they do not change the answer.
+    /// Each round refines the coloring of a node by the colors of its neighbors.
     pub refinement_rounds: usize,
 
     /// Maximum number of choices the search may make before giving up.
-    ///
-    /// Zero disables the search, which also avoids storing the undo trail. Any ambiguity then
-    /// yields [`Isomorphism::Unresolved`].
     pub search_budget: usize,
+}
+
+impl Options {
+    /// Default number of color refinement rounds.
+    pub const DEFAULT_REFINEMENT_ROUNDS: usize = 4;
+
+    /// Default search budget.
+    pub const DEFAULT_SEARCH_BUDGET: usize = 1 << 20;
 }
 
 impl Default for Options {
     fn default() -> Self {
         Options {
-            refinement_rounds: DEFAULT_REFINEMENT_ROUNDS,
-            search_budget: DEFAULT_SEARCH_BUDGET,
+            refinement_rounds: Self::DEFAULT_REFINEMENT_ROUNDS,
+            search_budget: Self::DEFAULT_SEARCH_BUDGET,
         }
     }
 }
 
+/// Statistics on an isomorphism computation.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct Statistics {
+    /// Number of color refinement rounds used.
+    pub rounds: usize,
+    /// Number of color classes after refinement.
+    pub color_classes: usize,
+    /// Number of choices made by the search.
+    pub choices: usize,
+}
+
 //-----------------------------------------------------------------------------
+
+/// A mapping between the nodes of two isomorphic graphs.
+///
+/// Nodes are identified by their indexes in [`Topology`].
+/// Each node in the first graph maps to the given node in in the second graph in the given orientation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NodeMapping {
+    // Image of each node using GBWT encoding for oriented nodes.
+    mapping: Vec<u32>,
+}
+
+impl NodeMapping {
+    /// Returns the number of nodes in each graph.
+    pub fn len(&self) -> usize {
+        self.mapping.len()
+    }
+
+    /// Returns `true` if the mapping is empty.
+    pub fn is_empty(&self) -> bool {
+        self.mapping.is_empty()
+    }
+
+    /// Returns the image of the given node and its relative orientation.
+    pub fn get(&self, node: usize) -> (usize, Orientation) {
+        crate::decode_oriented_node(self.mapping[node])
+    }
+
+    /// Returns an iterator over the mapping as `(source, destination, orientation)`.
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = (usize, usize, Orientation)> {
+        self.mapping.iter().enumerate().map(|(source, &encoded)| {
+            let (destination, orientation) = crate::decode_oriented_node(encoded);
+            (source, destination, orientation)
+        })
+    }
+
+    /// Returns `true` if no node maps to the reverse complement of another node.
+    pub fn is_forward(&self) -> bool {
+        self.mapping.iter().all(|&encoded| crate::decode_oriented_node(encoded).1 == Orientation::Forward)
+    }
+
+    /// Returns the inverse mapping.
+    pub fn invert(&self) -> NodeMapping {
+        let mut mapping = vec![0; self.mapping.len()];
+        for (source, destination, orientation) in self.iter() {
+            mapping[destination] = crate::encode_oriented_node(source, orientation);
+        }
+        NodeMapping { mapping }
+    }
+
+    // Creates a mapping from encoded images.
+    pub(crate) fn from_encoded(mapping: Vec<u32>) -> Self {
+        NodeMapping { mapping }
+    }
+}
 
 /// The reason why two graphs are not isomorphic.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -109,79 +180,10 @@ impl fmt::Display for Mismatch {
     }
 }
 
-//-----------------------------------------------------------------------------
-
-/// A bijection between the nodes of two graphs.
-///
-/// Nodes are identified by dense indexes in the [`Topology`] views of the graphs. Each node of the
-/// first graph maps to a node of the second graph and a relative orientation.
-/// [`Orientation::Forward`] means that the sequences are the same, while [`Orientation::Reverse`]
-/// means that the second sequence is the reverse complement of the first.
-///
-/// The mapping does not borrow the graphs. Use [`Topology::node_name`] to convert the indexes back
-/// to node names.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct NodeMapping {
-    // Image of each node, encoded as `2 * index + flip`.
-    mapping: Vec<u32>,
-}
-
-impl NodeMapping {
-    /// Returns the number of mapped nodes.
-    pub fn len(&self) -> usize {
-        self.mapping.len()
-    }
-
-    /// Returns `true` if the mapping is empty.
-    pub fn is_empty(&self) -> bool {
-        self.mapping.is_empty()
-    }
-
-    // FIXME: support::decode_node
-    /// Returns the image of the given node and its relative orientation.
-    pub fn get(&self, node: usize) -> (usize, Orientation) {
-        let encoded = self.mapping[node] as usize;
-        let orientation = if encoded & 1 == 0 { Orientation::Forward } else { Orientation::Reverse };
-        (encoded / 2, orientation)
-    }
-
-    // FIXME: support::decode_node
-    /// Returns an iterator over the mapping as `(source, destination, orientation)`.
-    pub fn iter(&self) -> impl ExactSizeIterator<Item = (usize, usize, Orientation)> {
-        self.mapping.iter().enumerate().map(|(source, &encoded)| {
-            let encoded = encoded as usize;
-            let orientation = if encoded & 1 == 0 { Orientation::Forward } else { Orientation::Reverse };
-            (source, encoded / 2, orientation)
-        })
-    }
-
-    // FIXME: support::decode_node
-    /// Returns `true` if no node maps to the reverse complement of another node.
-    pub fn is_forward(&self) -> bool {
-        self.mapping.iter().all(|&encoded| encoded & 1 == 0)
-    }
-
-    /// Returns the inverse mapping.
-    pub fn invert(&self) -> NodeMapping {
-        let mut mapping = vec![0; self.mapping.len()];
-        for (source, destination, orientation) in self.iter() {
-            mapping[destination] = (2 * source + (orientation as usize)) as u32;
-        }
-        NodeMapping { mapping }
-    }
-
-    // Creates a mapping from encoded images.
-    pub(crate) fn from_encoded(mapping: Vec<u32>) -> Self {
-        NodeMapping { mapping }
-    }
-}
-
-//-----------------------------------------------------------------------------
-
-/// The result of an isomorphism test.
+/// The result of a node-level isomorphism test.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Isomorphism {
-    /// The graphs are isomorphic, with the given verified node mapping.
+    /// The graphs are isomorphic, with the given node mapping.
     Isomorphic(NodeMapping),
     /// The graphs are not isomorphic, for the given reason.
     NotIsomorphic(Mismatch),
@@ -216,33 +218,62 @@ impl fmt::Display for Isomorphism {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Isomorphism::Isomorphic(_) => write!(f, "isomorphic"),
-            Isomorphism::NotIsomorphic(_) => write!(f, "not isomorphic"),
+            Isomorphism::NotIsomorphic(mismatch) => write!(f, "not isomorphic: {}", mismatch),
             Isomorphism::Unresolved => write!(f, "unresolved"),
+        }
+    }
+}
+
+/// The result of a unitig-level isomorphism test.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum UnitigIsomorphism {
+    /// The graphs are equivalent, with the given translation.
+    Isomorphic(Translation),
+    /// The graphs are not equivalent, for the given reason.
+    NotIsomorphic(Mismatch),
+    /// The search budget was exhausted before the question could be settled.
+    Unresolved,
+}
+
+impl UnitigIsomorphism {
+    /// Returns `true` if the graphs are equivalent.
+    pub fn is_isomorphic(&self) -> bool {
+        matches!(self, UnitigIsomorphism::Isomorphic(_))
+    }
+
+    /// Returns the translation, if the graphs are equivalent.
+    pub fn translation(&self) -> Option<&Translation> {
+        match self {
+            UnitigIsomorphism::Isomorphic(translation) => Some(translation),
+            _ => None,
+        }
+    }
+
+    /// Returns the translation, if the graphs are equivalent, consuming the result.
+    pub fn into_translation(self) -> Option<Translation> {
+        match self {
+            UnitigIsomorphism::Isomorphic(translation) => Some(translation),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for UnitigIsomorphism {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            UnitigIsomorphism::Isomorphic(_) => write!(f, "isomorphic"),
+            UnitigIsomorphism::NotIsomorphic(mismatch) => write!(f, "not isomorphic: {}", mismatch),
+            UnitigIsomorphism::Unresolved => write!(f, "unresolved"),
         }
     }
 }
 
 //-----------------------------------------------------------------------------
 
-/// Statistics on an isomorphism computation.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-pub struct Statistics {
-    /// Number of color refinement rounds.
-    pub rounds: usize,
-    /// Number of color classes after refinement.
-    pub color_classes: usize,
-    /// Number of choices made by the search.
-    pub individualizations: usize,
-}
-
-//-----------------------------------------------------------------------------
-
-/// Determines whether the two graphs are isomorphic.
+/// Determines whether the two graphs are isomorphic at node level.
 ///
-/// A positive answer includes a node mapping that has been verified against the sequences and the
-/// edges, so it never depends on hash values. A negative answer is returned only when it follows
-/// from an exact invariant or from an exhaustive search. Otherwise the result is
-/// [`Isomorphism::Unresolved`].
+/// See [`are_isomorphic_with_statistics`] for a version of the algorithm that also returns statistics.
+/// See [`are_isomorphic_unitigs`] for determining isomorphism at unitig level.
 ///
 /// # Examples
 ///
@@ -272,7 +303,7 @@ pub struct Statistics {
 /// assert!(result.is_isomorphic());
 /// let mapping = result.mapping().unwrap();
 /// assert_eq!(mapping.len(), 12);
-/// // The graph has no automorphisms, so every node maps to itself.
+/// // In this toy example, every node maps to itself.
 /// assert!(mapping.iter().all(|(source, destination, _)| source == destination));
 /// ```
 pub fn are_isomorphic<A: Topology, B: Topology>(
@@ -281,7 +312,7 @@ pub fn are_isomorphic<A: Topology, B: Topology>(
     are_isomorphic_with_statistics(first, second, options).0
 }
 
-/// As [`are_isomorphic`], but also returns statistics on the computation.
+/// A version of [`are_isomorphic`] that also returns statistics.
 pub fn are_isomorphic_with_statistics<A: Topology, B: Topology>(
     first: &A, second: &B, options: &Options
 ) -> (Isomorphism, Statistics) {
@@ -318,7 +349,7 @@ pub fn are_isomorphic_with_statistics<A: Topology, B: Topology>(
         first, second, &first_coloring, &second_coloring, &classes, options
     );
     let outcome = matcher.run();
-    statistics.individualizations = matcher.choices();
+    statistics.choices = matcher.choices();
 
     match outcome {
         Outcome::Complete => {
@@ -327,7 +358,7 @@ pub fn are_isomorphic_with_statistics<A: Topology, B: Topology>(
                 Ok(()) => (Isomorphism::Isomorphic(mapping), statistics),
                 // Every pair passed the local checks, so this can only happen if the choices made
                 // along the way were wrong. Without choices, the mapping was the only candidate.
-                Err(mismatch) if statistics.individualizations == 0 => {
+                Err(mismatch) if statistics.choices == 0 => {
                     (Isomorphism::NotIsomorphic(mismatch), statistics)
                 },
                 Err(_) => (Isomorphism::Unresolved, statistics),
@@ -341,63 +372,13 @@ pub fn are_isomorphic_with_statistics<A: Topology, B: Topology>(
 
 //-----------------------------------------------------------------------------
 
-/// The result of a unitig-level isomorphism test.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum UnitigIsomorphism {
-    /// The graphs are equivalent, with the given verified translation.
-    Isomorphic(Translation),
-    /// The graphs are not equivalent, for the given reason.
-    ///
-    /// The reason refers to the compacted graphs, where each node is a maximal non-branching path.
-    NotIsomorphic(Mismatch),
-    /// The question could not be settled.
-    Unresolved,
-}
-
-impl UnitigIsomorphism {
-    /// Returns `true` if the graphs are equivalent.
-    pub fn is_isomorphic(&self) -> bool {
-        matches!(self, UnitigIsomorphism::Isomorphic(_))
-    }
-
-    /// Returns the translation, if the graphs are equivalent.
-    pub fn translation(&self) -> Option<&Translation> {
-        match self {
-            UnitigIsomorphism::Isomorphic(translation) => Some(translation),
-            _ => None,
-        }
-    }
-
-    /// Returns the translation, if the graphs are equivalent, consuming the result.
-    pub fn into_translation(self) -> Option<Translation> {
-        match self {
-            UnitigIsomorphism::Isomorphic(translation) => Some(translation),
-            _ => None,
-        }
-    }
-}
-
-impl fmt::Display for UnitigIsomorphism {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            UnitigIsomorphism::Isomorphic(_) => write!(f, "isomorphic"),
-            UnitigIsomorphism::NotIsomorphic(_) => write!(f, "not isomorphic"),
-            UnitigIsomorphism::Unresolved => write!(f, "unresolved"),
-        }
-    }
-}
-
-//-----------------------------------------------------------------------------
-
-/// Determines whether two graphs are isomorphic at the level of maximal non-branching paths.
+/// Determines whether two graphs are isomorphic at unitig level.
 ///
-/// Two graphs that represent the same pangenome may still differ as graphs, because one of them
-/// has chopped long nodes into shorter fragments. Collapsing each maximal non-branching path into
-/// a single node removes the difference. A positive answer is a [`Translation`], which pairs paths
-/// of nodes rather than single nodes, because the two graphs cut the paths differently.
+/// See [`are_isomorphic_unitigs_with_statistics`] for a version of the algorithm that also returns statistics.
+/// See [`are_isomorphic`] for determining isomorphism at node level.
 ///
 /// Returns an error if either graph has a connected component that is a cycle with no branches.
-/// See [`crate::unitigs`] for why those are not supported.
+/// See [`crate::unitigs`] for further details.
 ///
 /// # Examples
 ///
@@ -422,7 +403,7 @@ impl fmt::Display for UnitigIsomorphism {
 /// let result = isomorphism::are_isomorphic(&whole, &chopped, &Options::default());
 /// assert!(!result.is_isomorphic());
 ///
-/// // They are the same pangenome.
+/// // They are isomorphic as unitig graphs.
 /// let result = isomorphism::are_isomorphic_unitigs(&whole, &chopped, &Options::default()).unwrap();
 /// assert!(result.is_isomorphic());
 ///
@@ -440,7 +421,7 @@ pub fn are_isomorphic_unitigs<A: Topology, B: Topology>(
     are_isomorphic_unitigs_with_statistics(first, second, options).map(|(result, _)| result)
 }
 
-/// As [`are_isomorphic_unitigs`], but also returns statistics on the computation.
+/// A version of [`are_isomorphic_unitigs`] that also returns statistics.
 pub fn are_isomorphic_unitigs_with_statistics<A: Topology, B: Topology>(
     first: &A, second: &B, options: &Options
 ) -> Result<(UnitigIsomorphism, Statistics), String> {
@@ -475,12 +456,17 @@ fn total_sequence_length<T: Topology>(graph: &T) -> usize {
     (0..graph.nodes()).map(|node| graph.sequence_len(node)).sum()
 }
 
-//-----------------------------------------------------------------------------
+/// Returns the side corresponding to the given side under the given relative orientation.
+pub(crate) fn map_side(side: gbz::NodeSide, orientation: Orientation) -> gbz::NodeSide {
+    match orientation {
+        Orientation::Forward => side,
+        Orientation::Reverse => side.flip(),
+    }
+}
 
 /// Verifies that the mapping is an isomorphism between the two graphs.
 ///
-/// This runs in linear time and does not use any hash values, so it is an independent check of a
-/// mapping obtained by any means.
+/// See also [`translation::verify_translation`].
 pub fn verify<A: Topology, B: Topology>(
     a: &A, b: &B, mapping: &NodeMapping
 ) -> Result<(), Mismatch> {
@@ -512,7 +498,7 @@ pub fn verify<A: Topology, B: Topology>(
             return Err(Mismatch::Structure);
         }
 
-        // The neighbors must match, side by side.
+        // Check the edges for each node side.
         for side in [gbz::NodeSide::Left, gbz::NodeSide::Right] {
             let image_side = map_side(side, orientation);
             if a.degree(source, side) != b.degree(destination, image_side) {
@@ -538,30 +524,24 @@ pub fn verify<A: Topology, B: Topology>(
 
 /// Writes the translation in TSV format.
 ///
-/// Each line has two walks separated by a tab: a maximal non-branching path in the first graph and
-/// the path in the second graph that spells the same sequence. A walk is written as a sequence of
-/// node names, each preceded by `>` for the forward orientation and `<` for the reverse, as in a
-/// GFA W-line. Each line is oriented so that the first node of the first walk is in forward
-/// orientation, when the walk allows it. There is no header line.
-///
-/// For example, `>1>2>3` and `<5<4` mean that nodes 1, 2, and 3 of the first graph, read in the
-/// forward orientation, spell the same sequence as nodes 5 and 4 of the second graph, read in the
-/// reverse orientation.
+/// The output contains one line for each unitig.
+/// Each line has two fields: the path in the first graph and the corresponding path in the second graph.
+/// The paths are written as in GFA W-lines.
 pub fn write_translation<A: Topology, B: Topology, W: Write>(
     first: &A, second: &B, translation: &Translation, writer: &mut W
 ) -> io::Result<()> {
     for index in 0..translation.len() {
-        write_walk(first, translation.first_walk(index), writer)?;
+        write_path(first, translation.first_walk(index), writer)?;
         writer.write_all(b"\t")?;
-        write_walk(second, translation.second_walk(index), writer)?;
+        write_path(second, translation.second_walk(index), writer)?;
         writer.write_all(b"\n")?;
     }
 
     Ok(())
 }
 
-// Writes the walk as `>name` or `<name` for each node in it.
-fn write_walk<T: Topology, W: Write>(
+// Writes a path using the GFA W-line format.
+fn write_path<T: Topology, W: Write>(
     graph: &T, walk: impl Iterator<Item = (usize, Orientation)>, writer: &mut W
 ) -> io::Result<()> {
     for (node, orientation) in walk {
@@ -574,20 +554,5 @@ fn write_walk<T: Topology, W: Write>(
 
     Ok(())
 }
-
-//-----------------------------------------------------------------------------
-
-/// Returns the side corresponding to the given side under the given relative orientation.
-pub(crate) fn map_side(side: gbz::NodeSide, orientation: Orientation) -> gbz::NodeSide {
-    match orientation {
-        Orientation::Forward => side,
-        Orientation::Reverse => side.flip(),
-    }
-}
-
-//-----------------------------------------------------------------------------
-
-#[cfg(test)]
-mod tests;
 
 //-----------------------------------------------------------------------------

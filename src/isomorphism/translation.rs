@@ -114,6 +114,8 @@ impl Translation {
 /// * Each walk is a valid non-branching path in its respective graph.
 /// * The two walks of a pair spell the same sequence.
 /// * Every node of both graphs is visited exactly once.
+///
+/// See also [`crate::isomorphism::verify`].
 pub fn verify_translation<A: Topology, B: Topology>(
     first: &A, second: &B, translation: &Translation
 ) -> Result<(), Mismatch> {
