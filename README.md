@@ -63,6 +63,56 @@ H	TL:Z:1f133f116e8dd98fc07a647a8954038c2bcf07a45759ba94718471fe34ed7a7c,e10f3b36
 
 Here we use `RN` (reference name) instead of `NM` (name).
 
+## Command line
+
+### Basic usage
+
+```sh
+pggname [options] graph1 [graph2 ...]
+```
+
+The tool writes the name of the graph and the file name to standard output in the same manner as `sha*sum`.
+If a GBZ graph already stores its name in the tags, that name is printed instead of computing it.
+Name information is currently not read from GFA headers.
+Use `--recompute` to discard stored name information and to recompute it.
+
+Use `--store-name` to write the name and the relationships to the GBZ tags.
+The file is rewritten only if the tags would change, and the relationships already stored in it are preserved.
+Note that the file is rewritten in place, so a failure during the write destroys the graph.
+This option does not work with GFA graphs, as the in-memory representation does not store enough information to reproduce the file.
+
+### Comparing graphs
+
+```sh
+pggname --compare [options] graph1 graph2
+```
+
+Option `--compare` requires two graphs.
+In addition to determining graph names, the tool will also try to determine the relationship between the graphs.
+The tool will consider if the graphs are identical, if one of them is a subgraph of the other, or if the graphs are isomorphic.
+Indirect relationships such as subgraph isomorphism will not be determined.
+If option `--store-name` is used with GBZ graphs, the determined relationship will be stored along with graph names.
+
+Graph isomorphism will be determined at unitig level, and a unitig may be matched to its reverse complent in the other graph.
+If two graphs are otherwise the same, but one has had its nodes chopped to a maximum length, the graphs will be considered isomorphic.
+While determining graph isomorphism can be computationally expensive, sequence labels make it simple with pangenome graphs.
+Two human pangenome graphs can be compared in a matter of minutes.
+In degenerate cases, the tool will leave the relationship unresolved rather than proceed with expensive computations.
+
+If option `--translation FILE` is given, the translation between the unitigs of isomorphic graphs will be written to `FILE`.
+The output will contain one line per unitig, listing the matched walks as TAB-separated fields.
+Example output for `trimmed.gfa` and `translation.gbz` in `test-data/`:
+
+```txt
+>s11	>1>2
+>s12	>3
+>s13	>4
+>s14	>5>6
+>s15	>9
+>s16	>10
+>s17	>11
+```
+
 ## Canonical GFA format
 
 Sort the nodes by their identifiers.
@@ -126,14 +176,6 @@ And its stable name is:
 ```txt
 54b49d18354a34fbd1af9aaac279e1b3ee67b2f68f0ff79f5ebf6c50c8d922a5
 ```
-
-## Other versions
-
-* Node identifiers interpreted as integers or strings.
-    * The canonical order of the nodes depends on the type of the identifiers.
-    * Using string identifiers requires more memory.
-    * String identifiers are faster with GFA graphs and slower with GBZ graphs.
-* All SHA-2 variants.
 
 ## Notes
 

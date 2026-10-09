@@ -33,10 +33,10 @@ use std::io::BufRead;
 /// assert!(graph.is_ok());
 ///
 /// let graph = graph.unwrap();
-/// let (node_count, edge_count, seq_len) = graph.statistics();
-/// assert_eq!(node_count, 12);
-/// assert_eq!(edge_count, 13);
-/// assert_eq!(seq_len, 12);
+/// let statistics = graph.statistics();
+/// assert_eq!(statistics.node_count, 12);
+/// assert_eq!(statistics.edge_count, 13);
+/// assert_eq!(statistics.total_sequence_length, 12);
 /// ```
 pub fn parse_gfa<G: Graph, R: BufRead>(reader: R) -> Result<G, String> {
     let mut graph = G::new();
@@ -45,6 +45,7 @@ pub fn parse_gfa<G: Graph, R: BufRead>(reader: R) -> Result<G, String> {
         if line.is_empty() {
             continue;
         }
+        // FIXME: Parse `GraphName` from header lines and return it somehow.
         if line[0] == b'S' {
             let fields: Vec<&[u8]> = line.split(|&c| c == b'\t').collect();
             if fields.len() < 3 {
@@ -76,7 +77,7 @@ pub fn parse_gfa<G: Graph, R: BufRead>(reader: R) -> Result<G, String> {
 pub fn hash<D: Digest, G: Graph>(graph: &G) -> String
     where digest::Output<D>: core::fmt::LowerHex {
     let mut hasher = D::new();
-    for bytes in graph.node_iter() {
+    for bytes in graph.serialized_node_iter() {
         hasher.update(&bytes);
     }
     let hash = hasher.finalize();
@@ -89,14 +90,12 @@ pub fn hash<D: Digest, G: Graph>(graph: &G) -> String
 ///
 /// ```
 /// use pggname::Graph;
-/// use pggname::graph::GBZInt;
 /// use gbz::GBZ;
 /// use gbz::support;
 /// use simple_sds::serialize;
 ///
 /// let filename = support::get_test_data("example.gbz");
-/// let gbz: GBZ = serialize::load_from(&filename).unwrap();
-/// let graph = GBZInt { graph: gbz };
+/// let graph: GBZ = serialize::load_from(&filename).unwrap();
 /// let hash = pggname::stable_name(&graph);
 /// assert_eq!(hash, "81b160c814182a12aaf95fd458e191590e95fb13c71e1c2f61ff827f605cf970");
 /// ```
@@ -120,7 +119,7 @@ fn parse_orientation(field: &[u8]) -> Result<Orientation, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::{GBZInt, GBZStr, GraphInt, GraphStr};
+    use crate::graph::{GraphInt, GraphStr};
 
     use gbz::GBZ;
     use gbz::support;
@@ -136,7 +135,6 @@ mod tests {
         hash_gfa_int: &'static str,
         hash_gbz_int: &'static str,
         hash_gfa_str: &'static str,
-        hash_gbz_str: &'static str,
     }
 
     const TEST_CASES: &[TestCase] = {
@@ -147,7 +145,6 @@ mod tests {
                 hash_gfa_int: "81b160c814182a12aaf95fd458e191590e95fb13c71e1c2f61ff827f605cf970",
                 hash_gbz_int: "81b160c814182a12aaf95fd458e191590e95fb13c71e1c2f61ff827f605cf970",
                 hash_gfa_str: "81b160c814182a12aaf95fd458e191590e95fb13c71e1c2f61ff827f605cf970",
-                hash_gbz_str: "81b160c814182a12aaf95fd458e191590e95fb13c71e1c2f61ff827f605cf970",
             },
             TestCase {
                 gfa_name: "translation.gfa",
@@ -155,7 +152,6 @@ mod tests {
                 hash_gfa_int: "", // Non-numeric node ids.
                 hash_gbz_int: "b834b724b50976560291fe7dc25d57679d513078158cdbf61dfa5a575cbd0497",
                 hash_gfa_str: "2e6552e5e455f0d24f75c40f14ea66c0c67600861014853d55be842ced5f2ba4",
-                hash_gbz_str: "e55ba1e7aad84b6735b4ca4ca46d7d1986a02864174aa66fe75b363e7e2d31d6",
             }
         ]
     };
@@ -195,14 +191,8 @@ mod tests {
         for test_case in TEST_CASES.iter() {
             let filename = support::get_test_data(&test_case.gbz_name);
             let gbz: GBZ = serialize::load_from(&filename).unwrap();
-
-            let gbz_int = GBZInt { graph: gbz.clone() };
-            let hash_int = hash::<Sha256, _>(&gbz_int);
-            assert_eq!(&hash_int, test_case.hash_gbz_int, "Wrong hash for GBZInt {}", test_case.gbz_name);
-
-            let gbz_str = GBZStr { graph: gbz.clone() };
-            let hash_str = hash::<Sha256, _>(&gbz_str);
-            assert_eq!(&hash_str, test_case.hash_gbz_str, "Wrong hash for GBZStr {}", test_case.gbz_name);
+            let hash_int = hash::<Sha256, _>(&gbz);
+            assert_eq!(&hash_int, test_case.hash_gbz_int, "Wrong hash for GBZ {}", test_case.gbz_name);
         }
     }
 }

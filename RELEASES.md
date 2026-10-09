@@ -1,5 +1,12 @@
 # Pggname releases
 
+## Current version
+
+* Major rewrite of the `pggname` tool:
+  * Two graphs can be compared for identity, a subgraph relationship, or isomorphism.
+  * Existing names in GBZ graphs will be reused unless told to discard and recompute them.
+  * The option to benchmark different variants of the naming scheme was removed.
+
 ## Pggname 0.3.0 (2026-08-24)
 
 * Supports GBZ version 3 with Zstandard compressed BWT.
@@ -29,7 +36,7 @@ Initial release of the stable graph name scheme. The reference implementation su
 * Switch to crates.io versions of dependencies, if necessary.
 * Update `RELEASES.md`.
 * Run `cargo clippy`.
-* Run tests with `cargo test`.
+* Run tests with `cargo test` and `cargo test -- --ignored`.
 * Build documentation with `cargo doc`.
 * Build the optimized version with `cargo build --release`.
 * Commit the final changes for the release.

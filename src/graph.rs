@@ -16,6 +16,9 @@
 //! Each node is followed by its canonical edges in sorted order.
 //! Edge lines do not include the overlap field, as pangenome graphs do not use it.
 //! Header, path, and walk lines are not included in the hash, and neither are optional fields.
+//!
+//! The [`Graph`] trait is used for stable name computation.
+//! See [`crate::topology`] for the structures used in isomorphism algorithms.
 
 use gbz::{GBZ, Orientation};
 use gbz::support;
@@ -49,11 +52,22 @@ pub trait Graph {
     /// Returns an error if some nodes required by the edges are missing.
     fn finalize(&mut self) -> Result<(), String>;
 
-    /// Returns the number of nodes, the number of edges, and total sequence length in the graph.
-    fn statistics(&self) -> (usize, usize, usize);
+    /// Returns graph statistics.
+    fn statistics(&self) -> GraphStatistics;
 
     /// Returns an iterator over serialized nodes in sorted order.
-    fn node_iter(&self) -> impl Iterator<Item=Vec<u8>>;
+    fn serialized_node_iter(&self) -> impl Iterator<Item=Vec<u8>>;
+}
+
+/// Basic graph statistics.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GraphStatistics {
+    /// The number of nodes in the graph.
+    pub node_count: usize,
+    /// The number of edges in the graph.
+    pub edge_count: usize,
+    /// The total sequence length of the graph.
+    pub total_sequence_length: usize,
 }
 
 //-----------------------------------------------------------------------------
@@ -152,17 +166,22 @@ impl Graph for GraphInt {
         Ok(())
     }
 
-    fn statistics(&self) -> (usize, usize, usize) {
+    fn statistics(&self) -> GraphStatistics {
+        let node_count = self.nodes.len();
         let mut edge_count = 0;
-        let mut seq_len = 0;
+        let mut total_sequence_length = 0;
         for node in self.nodes.values() {
             edge_count += node.edges.len();
-            seq_len += node.sequence.len();
+            total_sequence_length += node.sequence.len();
         }
-        (self.nodes.len(), edge_count, seq_len)
+        GraphStatistics {
+            node_count,
+            edge_count,
+            total_sequence_length,
+        }
     }
 
-    fn node_iter(&self) -> impl Iterator<Item=Vec<u8>> {
+    fn serialized_node_iter(&self) -> impl Iterator<Item=Vec<u8>> {
         self.nodes.iter().map(|(id, node)| node.serialize(*id))
     }
 }
@@ -249,30 +268,30 @@ impl Graph for GraphStr {
         Ok(())
     }
 
-    fn statistics(&self) -> (usize, usize, usize) {
+    fn statistics(&self) -> GraphStatistics {
+        let node_count = self.nodes.len();
         let mut edge_count = 0;
-        let mut seq_len = 0;
+        let mut total_sequence_length = 0;
         for node in self.nodes.values() {
             edge_count += node.edges.len();
-            seq_len += node.sequence.len();
+            total_sequence_length += node.sequence.len();
         }
-        (self.nodes.len(), edge_count, seq_len)
+        GraphStatistics {
+            node_count,
+            edge_count,
+            total_sequence_length,
+        }
     }
 
-    fn node_iter(&self) -> impl Iterator<Item=Vec<u8>> {
+    fn serialized_node_iter(&self) -> impl Iterator<Item=Vec<u8>> {
         self.nodes.iter().map(|(name, node)| node.serialize(name))
     }
 }
 
 //-----------------------------------------------------------------------------
 
-/// A GBZ wrapper using integer identifiers for the nodes.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct GBZInt {
-    pub graph: GBZ,
-}
-
-impl Graph for GBZInt {
+// GBZ always uses integer identifiers.
+impl Graph for GBZ {
     fn new() -> Self {
         unimplemented!()
     }
@@ -289,31 +308,34 @@ impl Graph for GBZInt {
         Ok(())
     }
 
-    fn statistics(&self) -> (usize, usize, usize) {
-        let node_count = self.graph.nodes();
-
+    fn statistics(&self) -> GraphStatistics {
+        let node_count = self.nodes();
         let mut edge_count = 0;
-        let mut seq_len = 0;
-        for source_id in self.graph.node_iter() {
+        let mut total_sequence_length = 0;
+        for source_id in self.node_iter() {
             for source_o in [Orientation::Forward, Orientation::Reverse] {
-                for (dest_id, dest_o) in self.graph.successors(source_id, source_o).unwrap() {
+                for (dest_id, dest_o) in self.successors(source_id, source_o).unwrap() {
                     if support::edge_is_canonical((source_id, source_o), (dest_id, dest_o)) {
                         edge_count += 1;
                     }
                 }
             }
-            seq_len += self.graph.sequence_len(source_id).unwrap_or(0);
+            total_sequence_length += self.sequence_len(source_id).unwrap_or(0);
         }
 
-        (node_count, edge_count, seq_len)
+        GraphStatistics {
+            node_count,
+            edge_count,
+            total_sequence_length,
+        }
     }
 
-    fn node_iter(&self) -> impl Iterator<Item=Vec<u8>> {
-        self.graph.node_iter().map(|id| {
-            let sequence = self.graph.sequence(id).unwrap_or(&[]);
+    fn serialized_node_iter(&self) -> impl Iterator<Item=Vec<u8>> {
+        self.node_iter().map(|id| {
+            let sequence = self.sequence(id).unwrap_or(&[]);
             let mut node = NodeInt::new(Some(sequence.to_vec()));
             for source_o in [Orientation::Forward, Orientation::Reverse] {
-                for (dest_id, dest_o) in self.graph.successors(id, source_o).unwrap() {
+                for (dest_id, dest_o) in self.successors(id, source_o).unwrap() {
                     if support::edge_is_canonical((id, source_o), (dest_id, dest_o)) {
                         node.edges.push((source_o, dest_id, dest_o));
                     }
@@ -321,71 +343,6 @@ impl Graph for GBZInt {
             }
             node.finalize();
             node.serialize(id)
-        })
-    }
-}
-
-//-----------------------------------------------------------------------------
-
-/// A GBZ wrapper using string names for the nodes.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct GBZStr {
-    pub graph: GBZ,
-}
-
-impl Graph for GBZStr {
-    fn new() -> Self {
-        unimplemented!()
-    }
-
-    fn add_node(&mut self, _: &[u8], _sequence: &[u8]) -> Result<(), String> {
-        unimplemented!()
-    }
-
-    fn add_edge(&mut self, _: &[u8], _: Orientation, _: &[u8], _: Orientation) -> Result<(), String> {
-        unimplemented!()
-    }
-
-    fn finalize(&mut self) -> Result<(), String> {
-        Ok(())
-    }
-
-    fn statistics(&self) -> (usize, usize, usize) {
-        let node_count = self.graph.nodes();
-
-        let mut edge_count = 0;
-        let mut seq_len = 0;
-        for source_id in self.graph.node_iter() {
-            for source_o in [Orientation::Forward, Orientation::Reverse] {
-                for (dest_id, dest_o) in self.graph.successors(source_id, source_o).unwrap() {
-                    if support::edge_is_canonical((source_id, source_o), (dest_id, dest_o)) {
-                        edge_count += 1;
-                    }
-                }
-            }
-            seq_len += self.graph.sequence_len(source_id).unwrap_or(0);
-        }
-
-        (node_count, edge_count, seq_len)
-    }
-
-    fn node_iter(&self) -> impl Iterator<Item=Vec<u8>> {
-        let mut ordered_nodes: Vec<(String, usize)> = self.graph.node_iter().map(|id| (id.to_string(), id)).collect();
-        ordered_nodes.sort_by(|a, b| a.0.cmp(&b.0));
-
-        ordered_nodes.into_iter().map(|(source_name, source_id)| {
-            let sequence = self.graph.sequence(source_id).unwrap_or(&[]);
-            let mut node = NodeStr::new(Some(sequence.to_vec()));
-            for source_o in [Orientation::Forward, Orientation::Reverse] {
-                for (dest_id, dest_o) in self.graph.successors(source_id, source_o).unwrap() {
-                    let dest_name = dest_id.to_string().as_bytes().to_vec();
-                    if GraphStr::edge_is_canonical(source_name.as_bytes(), source_o, &dest_name, dest_o) {
-                        node.edges.push((source_o, dest_name, dest_o));
-                    }
-                }
-            }
-            node.finalize();
-            node.serialize(source_name.as_bytes())
         })
     }
 }
