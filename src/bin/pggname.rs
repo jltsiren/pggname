@@ -34,9 +34,7 @@ fn compare_mode(config: &Config) -> Result<(), String> {
     let mut second = Input::load(&config.input_files[1], config)?;
     print_graph_name(&second.name, &second.filename);
     let verdict = compare_inputs(&first, &second, config)?;
-
-    // FIXME: what should we actually print
-    println!("{:<14}  {}  {}", verdict.to_string(), first.filename, second.filename);
+    println!("{}",verdict.to_string());
 
     if config.store_name {
         comparison::update_relationships(verdict, &mut first.name, &mut second.name);

@@ -47,10 +47,10 @@ mod tests;
 pub struct Unitigs {
     // The graph itself.
     graph: IndexedGraph,
-    // Starting offset of each walk, with a sentinel at the end.
+    // Starting offset of each path, with a sentinel at the end.
     offsets: Vec<u32>,
-    // Concatenated walks for each unitig, using GBWT encoding.
-    walks: Vec<u32>,
+    // Concatenated paths for each unitig, using GBWT encoding.
+    paths: Vec<u32>,
 }
 
 impl Unitigs {
@@ -64,7 +64,7 @@ impl Unitigs {
         let nodes = graph.nodes();
         let mut node_to_unitig = vec![Self::NONE; nodes];
         let mut offsets: Vec<u32> = vec![0];
-        let mut walks: Vec<u32> = Vec::new();
+        let mut paths: Vec<u32> = Vec::new();
 
         for node in 0..nodes {
             for side in [NodeSide::Left, NodeSide::Right] {
@@ -77,13 +77,13 @@ impl Unitigs {
                 let (mut curr_node, mut curr_side) = (node, side);
                 loop {
                     node_to_unitig[curr_node] = unitig;
-                    walks.push(crate::encode_oriented_node(curr_node, support::entry_orientation(curr_side)));
+                    paths.push(crate::encode_oriented_node(curr_node, support::entry_orientation(curr_side)));
                     match Self::unitig_continues_to(graph, curr_node, curr_side.flip()) {
                         Some((next_node, next_side)) => { curr_node = next_node; curr_side = next_side; },
                         None => break,
                     }
                 }
-                offsets.push(walks.len() as u32);
+                offsets.push(paths.len() as u32);
             }
         }
 
@@ -97,7 +97,7 @@ impl Unitigs {
         let mut result = Unitigs {
             graph: IndexedGraph::new(),
             offsets,
-            walks,
+            paths,
         };
         result.canonicalize();
         result.build_graph(graph, &node_to_unitig);
@@ -133,22 +133,22 @@ impl Unitigs {
         &self.graph
     }
 
-    /// Returns the walk corresponding to the given unitig.
+    /// Returns the path corresponding to the given unitig.
     ///
-    /// The walk uses GBWT encoding for oriented nodes.
+    /// The path uses GBWT encoding for oriented nodes.
     /// It is given in the canonical orientation (see [`support::path_is_canonical`]).
     pub fn unitig(&self, index: usize) -> impl ExactSizeIterator<Item = u32> {
         let range = self.offsets[index] as usize..self.offsets[index + 1] as usize;
-        self.walks[range].iter().copied()
+        self.paths[range].iter().copied()
     }
 
     // Canonicalizes the orientation of each unitig.
     fn canonicalize(&mut self) {
         for unitig in 0..self.len() {
             let range = self.offsets[unitig] as usize..self.offsets[unitig + 1] as usize;
-            let walk = &mut self.walks[range];
-            if !crate::encoded_walk_is_canonical(walk) {
-                crate::reverse_encoded_walk(walk);
+            let path = &mut self.paths[range];
+            if !crate::encoded_path_is_canonical(path) {
+                crate::reverse_encoded_path(path);
             }
         }
     }
@@ -163,7 +163,7 @@ impl Unitigs {
                 append_sequence(graph, node, orientation, &mut sequence);
             }
             // The unitig is named after the first node in it, which identifies it uniquely.
-            let name = graph.node_name(crate::decode_oriented_node(self.walks[self.offsets[index] as usize]).0);
+            let name = graph.node_name(crate::decode_oriented_node(self.paths[self.offsets[index] as usize]).0);
             self.graph.add_node(&name, &sequence);
         }
 
@@ -190,7 +190,7 @@ impl Unitigs {
             NodeSide::Left => self.offsets[unitig] as usize,
             NodeSide::Right => self.offsets[unitig + 1] as usize - 1,
         };
-        let (node, orientation) = crate::decode_oriented_node(self.walks[index]);
+        let (node, orientation) = crate::decode_oriented_node(self.paths[index]);
         let node_side = match side {
             NodeSide::Left => support::entry_side(orientation),
             NodeSide::Right => support::exit_side(orientation),

@@ -14,16 +14,16 @@ use gbz::support;
 ///
 /// Each unitig is represented as a sequence of oriented nodes.
 /// The orientations of the unitigs are chosen so that the unitigs spell the same sequence in both graphs.
-/// The walk in the first graph is given in the canonical orientation (see [`support::path_is_canonical`]).
+/// The path in the first graph is given in the canonical orientation (see [`support::path_is_canonical`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Translation {
-    // Concatenated walks for the unitigs in the first graph, using GBWT handles for oriented nodes.
+    // Concatenated paths for the unitigs in the first graph, using GBWT handles for oriented nodes.
     first_unitigs: Vec<u32>,
-    // The walk corresponding to unitig `i` is `first_unitigs[first_starts[i]..first_starts[i + 1]]`.
+    // The path corresponding to unitig `i` is `first_unitigs[first_starts[i]..first_starts[i + 1]]`.
     first_starts: Vec<u32>,
-    // Concatenated walks for the unitigs in the second graph, using GBWT handles for oriented nodes.
+    // Concatenated paths for the unitigs in the second graph, using GBWT handles for oriented nodes.
     second_unitigs: Vec<u32>,
-    // The walk corresponding to unitig `i` is `second_unitigs[second_starts[i]..second_starts[i + 1]]`.
+    // The path corresponding to unitig `i` is `second_unitigs[second_starts[i]..second_starts[i + 1]]`.
     second_starts: Vec<u32>,
 }
 
@@ -79,24 +79,24 @@ impl Translation {
     }
 
     /// Returns the given unitig in the first graph as `(node, orientation)` pairs.
-    pub fn first_walk(&self, index: usize) -> impl ExactSizeIterator<Item = (usize, Orientation)> {
-        Self::walk(&self.first_unitigs, &self.first_starts, index)
+    pub fn first_path(&self, index: usize) -> impl ExactSizeIterator<Item = (usize, Orientation)> {
+        Self::path(&self.first_unitigs, &self.first_starts, index)
     }
 
     /// Returns the given unitig in the second graph as `(node, orientation)` pairs.
-    pub fn second_walk(&self, index: usize) -> impl ExactSizeIterator<Item = (usize, Orientation)> {
-        Self::walk(&self.second_unitigs, &self.second_starts, index)
+    pub fn second_path(&self, index: usize) -> impl ExactSizeIterator<Item = (usize, Orientation)> {
+        Self::path(&self.second_unitigs, &self.second_starts, index)
     }
 
-    // Returns the given walk from the encoded nodes and the offsets.
-    fn walk(
+    // Returns the given path from the encoded nodes and the offsets.
+    fn path(
         nodes: &[u32], offsets: &[u32], index: usize
     ) -> impl ExactSizeIterator<Item = (usize, Orientation)> {
         let range = offsets[index] as usize..offsets[index + 1] as usize;
         nodes[range].iter().map(|&encoded| crate::decode_oriented_node(encoded))
     }
 
-    // Reverses the walk.
+    // Reverses the path.
     fn reverse(nodes: &mut [u32]) {
         nodes.reverse();
         for node in nodes.iter_mut() {
@@ -111,8 +111,8 @@ impl Translation {
 ///
 /// This checks that:
 ///
-/// * Each walk is a valid non-branching path in its respective graph.
-/// * The two walks of a pair spell the same sequence.
+/// * Each path is a valid non-branching path in its respective graph.
+/// * The two paths of a pair spell the same sequence.
 /// * Every node of both graphs is visited exactly once.
 ///
 /// See also [`crate::isomorphism::verify`].
@@ -127,8 +127,8 @@ pub fn verify_translation<A: Topology, B: Topology>(
     let mut second_sequence: Vec<u8> = Vec::new();
 
     for index in 0..translation.len() {
-        check_unitig(first, translation.first_walk(index), &mut first_visits, &mut first_sequence)?;
-        check_unitig(second, translation.second_walk(index), &mut second_visits, &mut second_sequence)?;
+        check_unitig(first, translation.first_path(index), &mut first_visits, &mut first_sequence)?;
+        check_unitig(second, translation.second_path(index), &mut second_visits, &mut second_sequence)?;
         if first_sequence != second_sequence {
             return Err(Mismatch::Structure);
         }
@@ -142,15 +142,15 @@ pub fn verify_translation<A: Topology, B: Topology>(
     Ok(())
 }
 
-// Checks that the walk is a non-branching path in the graph.
+// Checks that the path is a non-branching path in the graph.
 // Updates the number of visits to each node and writes the sequence to the buffer.
 fn check_unitig<T: Topology>(
-    graph: &T, walk: impl Iterator<Item = (usize, Orientation)>,
+    graph: &T, path: impl Iterator<Item = (usize, Orientation)>,
     visits: &mut [u32], sequence: &mut Vec<u8>
 ) -> Result<(), Mismatch> {
     sequence.clear();
     let mut previous: Option<(usize, Orientation)> = None;
-    for (node, orientation) in walk {
+    for (node, orientation) in path {
         if node >= visits.len() {
             return Err(Mismatch::NodeCount);
         }

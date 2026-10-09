@@ -8,7 +8,7 @@
 //! See [`crate::unitigs`] for the unitig graph and [`crate::graph`] for the trait used in stable graph name computation.
 
 use crate::MAX_NODES;
-use crate::graph::{GraphInt, GraphStr};
+use crate::graph::{GraphInt, GraphStr, GraphStatistics};
 
 use gbz::{GBZ, NodeSide, Orientation};
 use gbz::support;
@@ -66,17 +66,21 @@ pub trait Topology {
     /// Returns the name (original identifier) of the node with the given index.
     fn node_name(&self, node: usize) -> Vec<u8>;
 
-    // FIXME: This should return a struct.
     /// Returns the number of nodes, the number of edges, and total sequence length in the graph.
     ///
     /// These must match [`Graph::statistics`](crate::Graph::statistics) for the same graph.
-    fn statistics(&self) -> (usize, usize, usize) {
-        let nodes = self.nodes();
-        let mut seq_len = 0;
-        for node in 0..nodes {
-            seq_len += self.sequence_len(node);
+    fn statistics(&self) -> GraphStatistics {
+        let node_count = self.nodes();
+        let edge_count = self.edges();
+        let mut total_sequence_length = 0;
+        for node in 0..node_count {
+            total_sequence_length += self.sequence_len(node);
         }
-        (nodes, self.edges(), seq_len)
+        GraphStatistics {
+            node_count,
+            edge_count,
+            total_sequence_length,
+        }
     }
 }
 
@@ -185,7 +189,10 @@ fn side_pair(
 /// graph.add_edge(a, Orientation::Forward, b, Orientation::Forward);
 /// graph.finalize();
 ///
-/// assert_eq!(graph.statistics(), (2, 1, 5));
+/// let statistics = graph.statistics();
+/// assert_eq!(statistics.node_count, 2);
+/// assert_eq!(statistics.edge_count, 1);
+/// assert_eq!(statistics.total_sequence_length, 5);
 /// assert_eq!(graph.degree(a, NodeSide::Right), 1);
 /// assert_eq!(graph.degree(a, NodeSide::Left), 0);
 /// let neighbors: Vec<_> = graph.neighbors(a, NodeSide::Right).collect();
@@ -414,7 +421,10 @@ enum NodeIndex {
 /// let filename = support::get_test_data("example.gbz");
 /// let gbz: GBZ = serialize::load_from(&filename).unwrap();
 /// let graph = GbzTopology::new(&gbz).unwrap();
-/// assert_eq!(graph.statistics(), (12, 13, 12));
+/// let statistics = graph.statistics();
+/// assert_eq!(statistics.node_count, 12);
+/// assert_eq!(statistics.edge_count, 13);
+/// assert_eq!(statistics.total_sequence_length, 12);
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GbzTopology<'a> {

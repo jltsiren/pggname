@@ -666,10 +666,10 @@ fn node_isomorphic_graphs_translate_one_to_one() {
         let permuted = permute(&graph, &permutation, &no_flips(graph.nodes()));
 
         let translation = check_isomorphic_unitigs(&graph, &permuted, &format!("seed {}", seed));
-        // Neither graph splits a node of the other, so the two walks of a pair visit the same
+        // Neither graph splits a node of the other, so the two paths of a pair visit the same
         // nodes. A unitig whose sequence is its own reverse complement may be stored in opposite
-        // directions, and the walks are then in the opposite order, but still of the same length.
-        check_walk_lengths(&translation, &format!("seed {}", seed));
+        // directions, and the paths are then in the opposite order, but still of the same length.
+        check_path_lengths(&translation, &format!("seed {}", seed));
     }
 
     // A path of distinct, non-palindromic sequences has no such ambiguity.
@@ -680,17 +680,17 @@ fn node_isomorphic_graphs_translate_one_to_one() {
         let permuted = permute(&graph, &permutation, &no_flips(graph.nodes()));
 
         let translation = check_isomorphic_unitigs(&graph, &permuted, &format!("a rigid graph, seed {}", seed));
-        check_walk_lengths(&translation, &format!("a rigid graph, seed {}", seed));
+        check_path_lengths(&translation, &format!("a rigid graph, seed {}", seed));
     }
 }
 
-// Checks that the two walks of every pair have the same number of nodes, which means that neither
+// Checks that the two paths of every pair have the same number of nodes, which means that neither
 // graph splits a node of the other.
-fn check_walk_lengths(translation: &Translation, context: &str) {
+fn check_path_lengths(translation: &Translation, context: &str) {
     for index in 0..translation.len() {
         assert_eq!(
-            translation.first_walk(index).len(), translation.second_walk(index).len(),
-            "The walks of pair {} have different lengths for {}", index, context
+            translation.first_path(index).len(), translation.second_path(index).len(),
+            "The paths of pair {} have different lengths for {}", index, context
         );
     }
 }
@@ -732,13 +732,13 @@ fn chopped_graphs_are_equivalent() {
     // more for at least one of them.
     assert!(
         (0..translation.len()).all(|index| {
-            translation.first_walk(index).len() <= translation.second_walk(index).len()
+            translation.first_path(index).len() <= translation.second_path(index).len()
         }),
         "The chopped graph should not have fewer nodes on any path"
     );
     assert!(
         (0..translation.len()).any(|index| {
-            translation.first_walk(index).len() < translation.second_walk(index).len()
+            translation.first_path(index).len() < translation.second_path(index).len()
         }),
         "The translation should not be one to one, as the GBZ graph is chopped"
     );

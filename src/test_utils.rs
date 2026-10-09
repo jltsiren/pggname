@@ -233,7 +233,7 @@ pub fn mapping_of(permutation: &[usize], flips: &[bool]) -> NodeMapping {
 
 /// Checks that the translation is a correspondence between the two graphs.
 ///
-/// This spells out the sequence of each walk and counts the visits to each node, which is a
+/// This spells out the sequence of each path and counts the visits to each node, which is a
 /// different formulation from `verify_translation`.
 /// This does not check that the translation is based on non-branching paths.
 pub fn is_translation<A: Topology, B: Topology>(
@@ -243,12 +243,12 @@ pub fn is_translation<A: Topology, B: Topology>(
     let mut second_visits = vec![0; second.nodes()];
 
     for index in 0..translation.len() {
-        // The two walks must spell the same sequence.
-        let here = spell(first, translation.first_walk(index), &mut first_visits)?;
-        let there = spell(second, translation.second_walk(index), &mut second_visits)?;
+        // The two paths must spell the same sequence.
+        let here = spell(first, translation.first_path(index), &mut first_visits)?;
+        let there = spell(second, translation.second_path(index), &mut second_visits)?;
         if here != there {
             return Err(format!(
-                "The walks of pair {} spell different sequences: {} and {}",
+                "The paths of pair {} spell different sequences: {} and {}",
                 index, String::from_utf8_lossy(&here), String::from_utf8_lossy(&there)
             ));
         }
@@ -269,16 +269,16 @@ pub fn is_translation<A: Topology, B: Topology>(
     Ok(())
 }
 
-// Returns the sequence spelled by the walk, checking that it is a path and counting the visits.
+// Returns the sequence spelled by the path, checking that it is a path and counting the visits.
 fn spell<T: Topology>(
-    graph: &T, walk: impl Iterator<Item = (usize, Orientation)>, visits: &mut [usize]
+    graph: &T, path: impl Iterator<Item = (usize, Orientation)>, visits: &mut [usize]
 ) -> Result<Vec<u8>, String> {
     let mut result: Vec<u8> = Vec::new();
     let mut previous: Option<(usize, Orientation)> = None;
 
-    for (node, orientation) in walk {
+    for (node, orientation) in path {
         if node >= visits.len() {
-            return Err(format!("The walk visits node {}, which does not exist", node));
+            return Err(format!("The path visits node {}, which does not exist", node));
         }
         visits[node] += 1;
         if let Some((from, from_orientation)) = previous {

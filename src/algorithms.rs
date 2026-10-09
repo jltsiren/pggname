@@ -33,10 +33,10 @@ use std::io::BufRead;
 /// assert!(graph.is_ok());
 ///
 /// let graph = graph.unwrap();
-/// let (node_count, edge_count, seq_len) = graph.statistics();
-/// assert_eq!(node_count, 12);
-/// assert_eq!(edge_count, 13);
-/// assert_eq!(seq_len, 12);
+/// let statistics = graph.statistics();
+/// assert_eq!(statistics.node_count, 12);
+/// assert_eq!(statistics.edge_count, 13);
+/// assert_eq!(statistics.total_sequence_length, 12);
 /// ```
 pub fn parse_gfa<G: Graph, R: BufRead>(reader: R) -> Result<G, String> {
     let mut graph = G::new();

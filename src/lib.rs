@@ -44,16 +44,15 @@ pub fn decode_oriented_node(encoded: u32) -> (usize, Orientation) {
     support::decode_node(encoded as usize)
 }
 
-// FIXME: walk -> path everywhere, except when it refers to a GFA W-line
-/// Returns `true` if the encoded walk is canonical.
+/// Returns `true` if the encoded path is canonical.
 ///
 /// Some algorithms use the GBWT encoding for oriented nodes but store them as [`u32`] to save space.
 /// See [`support::path_is_canonical`].
-pub fn encoded_walk_is_canonical(walk: &[u32]) -> bool {
-    if walk.is_empty() {
+pub fn encoded_path_is_canonical(path: &[u32]) -> bool {
+    if path.is_empty() {
         return true;
     }
-    let (from, to) = (walk[0], walk[walk.len() - 1]);
+    let (from, to) = (path[0], path[path.len() - 1]);
     if decode_oriented_node(from).1 == Orientation::Forward && decode_oriented_node(to).1 == Orientation::Forward {
         return true;
     }
@@ -61,13 +60,13 @@ pub fn encoded_walk_is_canonical(walk: &[u32]) -> bool {
     support::encoded_edge_is_canonical(from, to)
 }
 
-/// Reverses the given encoded walk in place.
+/// Reverses the given encoded path in place.
 ///
 /// Some algorithms use the GBWT encoding for oriented nodes but store them as [`u32`] to save space.
 /// See [`support::reverse_path_in_place`].
-pub fn reverse_encoded_walk(walk: &mut [u32]) {
-    walk.reverse();
-    for encoded_node in walk.iter_mut() {
+pub fn reverse_encoded_path(path: &mut [u32]) {
+    path.reverse();
+    for encoded_node in path.iter_mut() {
         *encoded_node = support::flip_node(*encoded_node as usize) as u32;
     }
 }

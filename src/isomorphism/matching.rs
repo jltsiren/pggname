@@ -410,8 +410,7 @@ impl<'a, A: Topology, B: Topology> Matcher<'a, A, B> {
     // Checks that the assignment does not conflict with earlier assignments.
     // Checks that the sequences and degrees match.
     fn assign(&mut self, node: usize, image: usize, orientation: Orientation) -> Result<(), ()> {
-        // FIXME: support::encode_node
-        let encoded = (2 * image + (orientation as usize)) as u32;
+        let encoded = crate::encode_oriented_node(image, orientation);
 
         if self.image[node] != NONE {
             // A second deduction must agree, including on the relative orientation.
@@ -476,10 +475,8 @@ impl<'a, A: Topology, B: Topology> Matcher<'a, A, B> {
         if encoded == NONE {
             return None;
         }
-        // FIXME: support::decode_node
-        let encoded = encoded as usize;
-        let orientation = if encoded & 1 == 0 { Orientation::Forward } else { Orientation::Reverse };
-        Some((encoded / 2, orientation))
+        let (id, orientation) = crate::decode_oriented_node(encoded);
+        Some((id, orientation))
     }
 
     // Returns the neighbors of the given side as (side color, node, side).

@@ -131,8 +131,13 @@ fn self_loops() {
     let indexed = IndexedGraph::from(&original);
 
     // Three distinct edges, even though the degrees sum to four.
-    assert_eq!(original.statistics(), (3, 3, 8), "Wrong statistics for the original graph");
-    assert_eq!(indexed.statistics(), (3, 3, 8), "Wrong statistics for the indexed graph");
+    let expected_statistics = GraphStatistics {
+        node_count: 3,
+        edge_count: 3,
+        total_sequence_length: 8,
+    };
+    assert_eq!(original.statistics(), expected_statistics, "Wrong statistics for the original graph");
+    assert_eq!(indexed.statistics(), expected_statistics, "Wrong statistics for the indexed graph");
 
     let degrees = [(1, 1), (0, 1), (1, 0)];
     let mut degree_sum = 0;
@@ -186,7 +191,12 @@ fn duplicate_edges() {
 #[test]
 fn empty_graph() {
     let graph = IndexedGraph::new();
-    assert_eq!(graph.statistics(), (0, 0, 0), "Wrong statistics for an empty graph");
+    let expected_statistics = GraphStatistics {
+        node_count: 0,
+        edge_count: 0,
+        total_sequence_length: 0,
+    };
+    assert_eq!(graph.statistics(), expected_statistics, "Wrong statistics for an empty graph");
     assert_eq!(IndexedGraph::from_topology(&graph), graph, "Round trip changed the empty graph");
 }
 

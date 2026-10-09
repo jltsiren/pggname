@@ -52,12 +52,22 @@ pub trait Graph {
     /// Returns an error if some nodes required by the edges are missing.
     fn finalize(&mut self) -> Result<(), String>;
 
-    // FIXME: This should return a struct.
-    /// Returns the number of nodes, the number of edges, and total sequence length in the graph.
-    fn statistics(&self) -> (usize, usize, usize);
+    /// Returns graph statistics.
+    fn statistics(&self) -> GraphStatistics;
 
     /// Returns an iterator over serialized nodes in sorted order.
     fn serialized_node_iter(&self) -> impl Iterator<Item=Vec<u8>>;
+}
+
+/// Basic graph statistics.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GraphStatistics {
+    /// The number of nodes in the graph.
+    pub node_count: usize,
+    /// The number of edges in the graph.
+    pub edge_count: usize,
+    /// The total sequence length of the graph.
+    pub total_sequence_length: usize,
 }
 
 //-----------------------------------------------------------------------------
@@ -156,14 +166,19 @@ impl Graph for GraphInt {
         Ok(())
     }
 
-    fn statistics(&self) -> (usize, usize, usize) {
+    fn statistics(&self) -> GraphStatistics {
+        let node_count = self.nodes.len();
         let mut edge_count = 0;
-        let mut seq_len = 0;
+        let mut total_sequence_length = 0;
         for node in self.nodes.values() {
             edge_count += node.edges.len();
-            seq_len += node.sequence.len();
+            total_sequence_length += node.sequence.len();
         }
-        (self.nodes.len(), edge_count, seq_len)
+        GraphStatistics {
+            node_count,
+            edge_count,
+            total_sequence_length,
+        }
     }
 
     fn serialized_node_iter(&self) -> impl Iterator<Item=Vec<u8>> {
@@ -253,14 +268,19 @@ impl Graph for GraphStr {
         Ok(())
     }
 
-    fn statistics(&self) -> (usize, usize, usize) {
+    fn statistics(&self) -> GraphStatistics {
+        let node_count = self.nodes.len();
         let mut edge_count = 0;
-        let mut seq_len = 0;
+        let mut total_sequence_length = 0;
         for node in self.nodes.values() {
             edge_count += node.edges.len();
-            seq_len += node.sequence.len();
+            total_sequence_length += node.sequence.len();
         }
-        (self.nodes.len(), edge_count, seq_len)
+        GraphStatistics {
+            node_count,
+            edge_count,
+            total_sequence_length,
+        }
     }
 
     fn serialized_node_iter(&self) -> impl Iterator<Item=Vec<u8>> {
@@ -288,11 +308,10 @@ impl Graph for GBZ {
         Ok(())
     }
 
-    fn statistics(&self) -> (usize, usize, usize) {
+    fn statistics(&self) -> GraphStatistics {
         let node_count = self.nodes();
-
         let mut edge_count = 0;
-        let mut seq_len = 0;
+        let mut total_sequence_length = 0;
         for source_id in self.node_iter() {
             for source_o in [Orientation::Forward, Orientation::Reverse] {
                 for (dest_id, dest_o) in self.successors(source_id, source_o).unwrap() {
@@ -301,10 +320,14 @@ impl Graph for GBZ {
                     }
                 }
             }
-            seq_len += self.sequence_len(source_id).unwrap_or(0);
+            total_sequence_length += self.sequence_len(source_id).unwrap_or(0);
         }
 
-        (node_count, edge_count, seq_len)
+        GraphStatistics {
+            node_count,
+            edge_count,
+            total_sequence_length,
+        }
     }
 
     fn serialized_node_iter(&self) -> impl Iterator<Item=Vec<u8>> {

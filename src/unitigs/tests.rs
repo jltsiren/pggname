@@ -42,7 +42,7 @@ fn check_paths<T: Topology>(source: &T, unitigs: &Unitigs, context: &str) {
         }
         assert_eq!(expected, sequence, "Wrong sequence for unitig {} in {}", unitig, context);
         let path: Vec<u32> = unitigs.unitig(unitig).collect();
-        assert!(crate::encoded_walk_is_canonical(&path), "Unitig {} is not canonical in {}", unitig, context);
+        assert!(crate::encoded_path_is_canonical(&path), "Unitig {} is not canonical in {}", unitig, context);
     }
 
     assert_eq!(total, source.nodes(), "The pieces do not cover every node in {}", context);

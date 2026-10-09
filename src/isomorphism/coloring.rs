@@ -23,6 +23,8 @@ use super::hashing::{self, combine};
 use gbz::NodeSide;
 use gbz::support;
 
+use simple_sds::raw_vector::{RawVector, AccessRaw};
+
 //-----------------------------------------------------------------------------
 
 /// An isomorphism-invariant coloring of the nodes of a graph.
@@ -30,11 +32,10 @@ use gbz::support;
 pub(crate) struct Coloring {
     // Color of each node.
     colors: Vec<u64>,
-    // FIXME: replace with a bitvector
     // `true` if the right side is the head side of the node.
-    head_is_right: Vec<bool>,
+    head_is_right: RawVector,
     // `true` if the two sides of the node cannot be told apart.
-    symmetric: Vec<bool>,
+    symmetric: RawVector,
     // Number of refinement rounds actually performed.
     rounds: usize,
     // Number of distinct colors.
@@ -47,8 +48,8 @@ impl Coloring {
         let nodes = graph.nodes();
         let mut result = Coloring {
             colors: vec![0; nodes],
-            head_is_right: vec![false; nodes],
-            symmetric: vec![false; nodes],
+            head_is_right: RawVector::with_len(nodes, false),
+            symmetric: RawVector::with_len(nodes, false),
             rounds: 0,
             classes: 0,
         };
@@ -101,12 +102,12 @@ impl Coloring {
 
     /// Returns `true` if the two sides of the node cannot be told apart.
     pub(crate) fn is_symmetric(&self, node: usize) -> bool {
-        self.symmetric[node]
+        self.symmetric.bit(node)
     }
 
     /// Returns the head side of the given node.
     pub(crate) fn head_side(&self, node: usize) -> NodeSide {
-        if self.head_is_right[node] { NodeSide::Right } else { NodeSide::Left }
+        if self.head_is_right.bit(node) { NodeSide::Right } else { NodeSide::Left }
     }
 
     /// Returns the color of the given side of the given node.
@@ -114,7 +115,7 @@ impl Coloring {
     /// The color is derived from the current color of the node.
     /// Both sides of a symmetric node get the same color.
     pub(crate) fn side_color(&self, node: usize, side: NodeSide) -> u64 {
-        let bit = if self.symmetric[node] { 0 } else { (side != self.head_side(node)) as u64 };
+        let bit = if self.symmetric.bit(node) { 0 } else { (side != self.head_side(node)) as u64 };
         combine(self.colors[node], bit)
     }
 
@@ -140,8 +141,8 @@ impl Coloring {
             let (left, right) = (left[node], right[node]);
             // The sides are interchangeable a priori, so the pair must be unordered.
             self.colors[node] = combine(left.min(right), right.max(left));
-            self.head_is_right[node] = right < left;
-            self.symmetric[node] = left == right;
+            self.head_is_right.set_bit(node, right < left);
+            self.symmetric.set_bit(node, left == right);
         }
     }
 
@@ -263,6 +264,9 @@ impl Classes {
     /// Returns [`Mismatch::Colors`] if the graphs have different multisets of colors, which proves
     /// that they are not isomorphic.
     pub(crate) fn new(first: &Coloring, second: &Coloring) -> Result<Self, Mismatch> {
+        if first.len() != second.len() {
+            return Err(Mismatch::Colors);
+        }
         let sorted_first = Self::sorted_colors(first);
         let sorted_second = Self::sorted_colors(second);
 
@@ -272,34 +276,22 @@ impl Classes {
             sizes: Vec::new(),
         };
 
-        // FIXME: This is too complicated. We can iterate over both sorted lists simultaneously.
-        // Merge-join the runs of equal colors. Any color that occurs in one graph only, or that
-        // occurs a different number of times in the two graphs, is a mismatch.
-        let (mut i, mut j) = (0, 0);
-        while i < sorted_first.len() || j < sorted_second.len() {
-            if i >= sorted_first.len() || j >= sorted_second.len() {
+        // Check that both colorings have the same number of nodes for each color.
+        // Assign nodes to color classes.
+        let mut class = 0;
+        let mut prev_color = None;
+        for ((first_color, first_node), (second_color, second_node)) in sorted_first.iter().zip(sorted_second.iter()) {
+            if first_color != second_color {
                 return Err(Mismatch::Colors);
             }
-            let color = sorted_first[i].0;
-            if color != sorted_second[j].0 {
-                return Err(Mismatch::Colors);
+            if Some(*first_color) != prev_color {
+                class = result.sizes.len() as u32;
+                result.sizes.push(0);
+                prev_color = Some(*first_color);
             }
-            let end_first = Self::run_end(&sorted_first, i);
-            let end_second = Self::run_end(&sorted_second, j);
-            if end_first - i != end_second - j {
-                return Err(Mismatch::Colors);
-            }
-
-            let class = result.sizes.len() as u32;
-            result.sizes.push((end_first - i) as u32);
-            for &(_, node) in sorted_first[i..end_first].iter() {
-                result.in_first[node as usize] = class;
-            }
-            for &(_, node) in sorted_second[j..end_second].iter() {
-                result.in_second[node as usize] = class;
-            }
-            i = end_first;
-            j = end_second;
+            result.in_first[*first_node as usize] = class;
+            result.in_second[*second_node as usize] = class;
+            result.sizes[class as usize] += 1;
         }
 
         Ok(result)
@@ -342,16 +334,6 @@ impl Classes {
             .collect();
         result.sort_unstable();
         result
-    }
-
-    // Returns the end of the run of equal colors starting at the given offset.
-    fn run_end(sorted: &[(u64, u32)], start: usize) -> usize {
-        let color = sorted[start].0;
-        let mut end = start + 1;
-        while end < sorted.len() && sorted[end].0 == color {
-            end += 1;
-        }
-        end
     }
 }
 

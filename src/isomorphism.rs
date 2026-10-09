@@ -410,10 +410,10 @@ pub fn are_isomorphic_with_statistics<A: Topology, B: Topology>(
 /// // Node 1 of the first graph covers both nodes of the second.
 /// let translation = result.translation().unwrap();
 /// assert_eq!(translation.len(), 1);
-/// let first_walk: Vec<_> = translation.first_walk(0).collect();
-/// assert_eq!(first_walk, vec![(0, Orientation::Forward)]);
-/// let second_walk: Vec<_> = translation.second_walk(0).collect();
-/// assert_eq!(second_walk, vec![(0, Orientation::Forward), (1, Orientation::Forward)]);
+/// let first_path: Vec<_> = translation.first_path(0).collect();
+/// assert_eq!(first_path, vec![(0, Orientation::Forward)]);
+/// let second_path: Vec<_> = translation.second_path(0).collect();
+/// assert_eq!(second_path, vec![(0, Orientation::Forward), (1, Orientation::Forward)]);
 /// ```
 pub fn are_isomorphic_unitigs<A: Topology, B: Topology>(
     first: &A, second: &B, options: &Options
@@ -531,9 +531,9 @@ pub fn write_translation<A: Topology, B: Topology, W: Write>(
     first: &A, second: &B, translation: &Translation, writer: &mut W
 ) -> io::Result<()> {
     for index in 0..translation.len() {
-        write_path(first, translation.first_walk(index), writer)?;
+        write_path(first, translation.first_path(index), writer)?;
         writer.write_all(b"\t")?;
-        write_path(second, translation.second_walk(index), writer)?;
+        write_path(second, translation.second_path(index), writer)?;
         writer.write_all(b"\n")?;
     }
 
@@ -542,9 +542,9 @@ pub fn write_translation<A: Topology, B: Topology, W: Write>(
 
 // Writes a path using the GFA W-line format.
 fn write_path<T: Topology, W: Write>(
-    graph: &T, walk: impl Iterator<Item = (usize, Orientation)>, writer: &mut W
+    graph: &T, path: impl Iterator<Item = (usize, Orientation)>, writer: &mut W
 ) -> io::Result<()> {
-    for (node, orientation) in walk {
+    for (node, orientation) in path {
         writer.write_all(match orientation {
             Orientation::Forward => b">",
             Orientation::Reverse => b"<",

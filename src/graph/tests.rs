@@ -259,10 +259,10 @@ fn check_statistics<G: Graph, E: Sized>(graph: &G, canonical_edges: &[BTreeSet<E
     let true_node_count = NODE_COUNT;
     let true_edge_count: usize = canonical_edges.iter().map(|edges| edges.len()).sum();
     let true_seq_len: usize = sequences.iter().map(|s| s.len()).sum();
-    let (node_count, edge_count, seq_len) = graph.statistics();
-    assert_eq!(node_count, true_node_count, "Wrong node count in round {}", round);
-    assert_eq!(edge_count, true_edge_count, "Wrong edge count in round {}", round);
-    assert_eq!(seq_len, true_seq_len, "Wrong sequence length in round {}", round);
+    let statistics = graph.statistics();
+    assert_eq!(statistics.node_count, true_node_count, "Wrong node count in round {}", round);
+    assert_eq!(statistics.edge_count, true_edge_count, "Wrong edge count in round {}", round);
+    assert_eq!(statistics.total_sequence_length, true_seq_len, "Wrong sequence length in round {}", round);
 }
 
 fn check_gfa_int(
@@ -388,10 +388,10 @@ fn gbz() {
     let graph: GBZ = serialize::load_from(&filename).unwrap();
     let (true_node_count, true_edge_count, true_seq_len) = gbz_statistics(&graph);
 
-    let (node_count, edge_count, seq_len) = graph.statistics();
-    assert_eq!(node_count, true_node_count, "Wrong node count in GBZ");
-    assert_eq!(edge_count, true_edge_count, "Wrong edge count in GBZ");
-    assert_eq!(seq_len, true_seq_len, "Wrong sequence length in GBZ");
+    let statistics = graph.statistics();
+    assert_eq!(statistics.node_count, true_node_count, "Wrong node count in GBZ");
+    assert_eq!(statistics.edge_count, true_edge_count, "Wrong edge count in GBZ");
+    assert_eq!(statistics.total_sequence_length, true_seq_len, "Wrong sequence length in GBZ");
 
     let serialized: Vec<Vec<u8>> = graph.serialized_node_iter().collect();
     assert_eq!(serialized.len(), true_node_count, "Wrong number of serialized nodes in GBZ");

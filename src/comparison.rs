@@ -121,10 +121,10 @@ pub fn compare<A: Topology, B: Topology>(
         return Ok((Verdict::Supergraph, None));
     }
 
-    let result = isomorphism::are_isomorphic_unitigs(first, second, options)?; // FIXME: rename
+    let result = isomorphism::are_isomorphic_unitigs(first, second, options)?;
     Ok(match result {
         UnitigIsomorphism::Isomorphic(translation) => (Verdict::Isomorphic, Some(translation)),
-        UnitigIsomorphism::NotIsomorphic(_) => (Verdict::Unrelated, None), // FIXME: do we need the mismatch?
+        UnitigIsomorphism::NotIsomorphic(_) => (Verdict::Unrelated, None),
         UnitigIsomorphism::Unresolved => (Verdict::Unresolved, None),
     })
 }
