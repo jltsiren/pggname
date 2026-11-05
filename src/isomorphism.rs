@@ -492,7 +492,7 @@ pub fn verify<A: Topology, B: Topology>(
         let image = b.sequence(destination);
         let matches = match orientation {
             Orientation::Forward => sequence == image,
-            Orientation::Reverse => hashing::reverse_complement(&sequence) == image.as_ref(),
+            Orientation::Reverse => gbz::support::reverse_complement(&sequence) == image.as_ref(),
         };
         if !matches {
             return Err(Mismatch::Structure);

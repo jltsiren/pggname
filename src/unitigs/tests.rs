@@ -36,7 +36,7 @@ fn check_paths<T: Topology>(source: &T, unitigs: &Unitigs, context: &str) {
             match orientation {
                 Orientation::Forward => expected.extend_from_slice(&node_sequence),
                 Orientation::Reverse => expected.extend(
-                    isomorphism::hashing::reverse_complement(&node_sequence)
+                    gbz::support::reverse_complement(&node_sequence)
                 ),
             }
         }
@@ -93,7 +93,7 @@ fn reverse_traversals_are_handled() {
     // `GAT` + revcomp(`TAA`) + `CA` = `GAT` + `TTA` + `CA`.
     let sequence = unitigs.graph().sequence(0).to_vec();
     let expected = b"GATTTACA".to_vec();
-    let canonical = isomorphism::hashing::reverse_complement(&expected);
+    let canonical = gbz::support::reverse_complement(&expected);
     assert!(
         sequence == expected || sequence == canonical,
         "Wrong unitig sequence: {}", String::from_utf8_lossy(&sequence)

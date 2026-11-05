@@ -2,7 +2,6 @@
 
 use crate::isomorphism::NodeMapping;
 use crate::isomorphism::translation::Translation;
-use crate::isomorphism::hashing;
 use crate::topology::{IndexedGraph, Topology};
 
 use gbz::{NodeSide, Orientation};
@@ -98,7 +97,7 @@ pub fn permute<T: Topology>(source: &T, permutation: &[usize], flips: &[bool]) -
     for (node, &original) in inverse.iter().enumerate() {
         let sequence = source.sequence(original);
         let sequence = if flips[original] {
-            hashing::reverse_complement(&sequence)
+            gbz::support::reverse_complement(&sequence)
         } else {
             sequence.to_vec()
         };
@@ -291,7 +290,7 @@ fn spell<T: Topology>(
         let sequence = graph.sequence(node);
         match orientation {
             Orientation::Forward => result.extend_from_slice(&sequence),
-            Orientation::Reverse => result.extend(hashing::reverse_complement(&sequence)),
+            Orientation::Reverse => result.extend(gbz::support::reverse_complement(&sequence)),
         }
         previous = Some((node, orientation));
     }
@@ -331,7 +330,7 @@ pub fn is_isomorphism<A: Topology, B: Topology>(
         let sequence = first.sequence(source).to_vec();
         let expected = match orientation {
             Orientation::Forward => sequence,
-            Orientation::Reverse => hashing::reverse_complement(&sequence),
+            Orientation::Reverse => gbz::support::reverse_complement(&sequence),
         };
         if expected != second.sequence(destination).to_vec() {
             return Err(format!("Wrong sequence for the image of node {}", source));

@@ -9,7 +9,6 @@
 //! Any sequence position in a cycle is a potential starting point for the unitig.
 //! But even if two graphs contain the same sequence as a cycle, there may not be any sequence position that starts a node in both graphs.
 
-use crate::isomorphism::hashing;
 use crate::topology::{IndexedGraph, Topology};
 
 use gbz::{NodeSide, Orientation};
@@ -212,7 +211,7 @@ pub(crate) fn append_sequence<T: Topology>(graph: &T, node: usize, orientation: 
     match orientation {
         Orientation::Forward => target.extend_from_slice(&sequence),
         Orientation::Reverse => target.extend(
-            sequence.iter().rev().map(|&c| hashing::COMPLEMENT[c as usize])
+            sequence.iter().rev().map(|&c| gbz::support::COMPLEMENT[c as usize])
         ),
     }
 }
