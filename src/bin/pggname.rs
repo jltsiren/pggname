@@ -12,8 +12,10 @@ use pggname::topology::{GbzTopology, IndexedGraph};
 use simple_sds::serialize;
 
 use std::fs::{File, OpenOptions};
-use std::io::{BufReader, BufWriter, Write};
-use std::{env, process};
+use std::io::{BufReader, BufWriter, BufRead, Write};
+use std::{env, io, process};
+
+use flate2::read::MultiGzDecoder;
 
 //-----------------------------------------------------------------------------
 
@@ -120,14 +122,25 @@ impl Config {
 
 //-----------------------------------------------------------------------------
 
+fn is_gzip_compressed<R: BufRead>(reader: &mut R) -> io::Result<bool> {
+    let buffer = reader.fill_buf()?;
+    Ok(buffer.starts_with(&[0x1f, 0x8b]))
+}
+
 // Parses the GFA graph, using integer node identifiers if possible and string identifiers
-// otherwise.
+// otherwise. The file may be gzip-compressed.
 fn read_gfa<G: Graph>(input_file: &str) -> Result<G, String> {
     let mut options = OpenOptions::new();
     let gfa_file = options.read(true).open(input_file)
         .map_err(|e| format!("Error opening GFA file {}: {}", input_file, e))?;
-    let reader = BufReader::new(gfa_file);
-    algorithms::parse_gfa::<G, _>(reader)
+    let mut reader = BufReader::new(gfa_file);
+    if is_gzip_compressed(&mut reader).map_err(|e| format!("Error checking gzip compression for {}: {}", input_file, e))? {
+        let decoder = MultiGzDecoder::new(reader);
+        let reader = BufReader::new(decoder);
+        algorithms::parse_gfa::<G, _>(reader)
+    } else {
+        algorithms::parse_gfa::<G, _>(reader)
+    }
 }
 
 // Returns the graph itself and the version of the file format.

@@ -6,6 +6,7 @@
   * Two graphs can be compared for identity, a subgraph relationship, or isomorphism.
   * Existing names in GBZ graphs will be reused unless told to discard and recompute them.
   * The option to benchmark different variants of the naming scheme was removed.
+  * GFA files can be gzip-compressed.
 
 ## Pggname 0.3.0 (2026-08-24)
 
