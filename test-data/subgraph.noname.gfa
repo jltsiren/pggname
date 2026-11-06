@@ -1,0 +1,15 @@
+H	VN:Z:1.1
+S	1	GAT
+S	2	TA
+S	3	CA
+S	4	TA
+S	5	GAT
+S	6	TA
+L	1	+	2	+	0M
+L	2	+	3	+	0M
+L	2	+	4	+	0M
+L	3	+	5	+	0M
+L	4	+	5	+	0M
+L	5	+	6	+	0M
+W	sample	1	A	0	12	>1>2>3>5>6
+W	sample	2	A	0	12	>1>2>4>5>6
