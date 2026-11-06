@@ -12,7 +12,6 @@ use std::io::BufRead;
 
 //-----------------------------------------------------------------------------
 
-// FIXME: once we have test data for integration tests, add a test with a GFA with a graph name
 /// Builds a graph from the given GFA input.
 ///
 /// If there is a stable name stored in GFA headers, returns it as well.
@@ -136,10 +135,10 @@ fn parse_orientation(field: &[u8]) -> Result<Orientation, String> {
 mod tests {
     use super::*;
     use crate::graph::{GraphInt, GraphStr};
+    use crate::test_utils;
 
     use gbz::GBZ;
     use gbz::support;
-    use sha2::Sha256;
     use simple_sds::serialize;
 
     use std::fs::OpenOptions;
@@ -185,7 +184,7 @@ mod tests {
             if !test_case.hash_gfa_int.is_empty() {
                 assert!(graph_int.is_ok(), "Failed to parse GraphInt {}", test_case.gfa_name);
                 let (graph_int, _) = graph_int.unwrap();
-                let hash_int = hash::<Sha256, _>(&graph_int);
+                let hash_int = stable_name(&graph_int);
                 assert_eq!(&hash_int, test_case.hash_gfa_int, "Wrong hash for GraphInt {}", test_case.gfa_name);
             } else {
                 assert!(graph_int.is_err(), "GraphInt parsing should have failed for {}", test_case.gfa_name);
@@ -197,7 +196,7 @@ mod tests {
                 .unwrap();
             let reader = BufReader::new(file);
             let (graph_str, _) : (GraphStr, Option<GraphName>) = parse_gfa(reader).unwrap();
-            let hash_str = hash::<Sha256, _>(&graph_str);
+            let hash_str = stable_name(&graph_str);
             assert_eq!(&hash_str, test_case.hash_gfa_str, "Wrong hash for GraphStr {}", test_case.gfa_name);
         }
     }
@@ -207,8 +206,30 @@ mod tests {
         for test_case in TEST_CASES.iter() {
             let filename = support::get_test_data(&test_case.gbz_name);
             let gbz: GBZ = serialize::load_from(&filename).unwrap();
-            let hash_int = hash::<Sha256, _>(&gbz);
+            let hash_int = stable_name(&gbz);
             assert_eq!(&hash_int, test_case.hash_gbz_int, "Wrong hash for GBZ {}", test_case.gbz_name);
+        }
+    }
+
+    #[test]
+    fn stored_name_in_gfa() {
+        for graph_name in ["base", "chopped", "subgraph"] {
+            let no_name = test_utils::get_test_graph(graph_name, "noname", "gfa");
+            let data = std::fs::read(&no_name).unwrap();
+            let reader = BufReader::new(&data[..]);
+            let (_, name) = parse_gfa::<GraphInt, _>(reader)
+                .expect(&format!("Failed to read {}.noname.gfa", graph_name));
+            assert!(name.is_none(), "Expected no name for {}.noname.gfa", graph_name);
+
+            let with_name = test_utils::get_test_graph(graph_name, "name", "gfa");
+            let data = std::fs::read(&with_name).unwrap();
+            let reader = BufReader::new(&data[..]);
+            let (graph, name) = parse_gfa::<GraphInt, _>(reader)
+                .expect(&format!("Failed to read {}.name.gfa", graph_name));
+            assert!(name.is_some(), "Expected a name for {}.name.gfa", graph_name);
+            let expected = stable_name(&graph);
+            let name = name.unwrap();
+            assert_eq!(name.name(), Some(&expected), "Wrong name for {}.name.gfa", graph_name);
         }
     }
 }

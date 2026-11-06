@@ -74,7 +74,7 @@ pggname [options] graph1 [graph2 ...]
 The tool writes the name of the graph and the file name to standard output in the same manner as `sha*sum`.
 If a GBZ graph already stores its name in the tags, that name is printed instead of computing it.
 Name information is currently not read from GFA headers.
-Use `--recompute` to discard stored name information and to recompute it.
+Use `--recompute` to discard stored name information (including relationships) and to recompute the name.
 
 Use `--store-name` to write the name and the relationships to the GBZ tags.
 The file is rewritten only if the tags would change, and the relationships already stored in it are preserved.

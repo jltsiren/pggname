@@ -9,6 +9,17 @@ use gbz::support;
 
 use rand::Rng;
 
+use std::path::{Path, PathBuf};
+
+//-----------------------------------------------------------------------------
+
+/// Returns the path to a graph in `test-data`.
+pub fn get_test_graph(graph: &str, variant: &str, format: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("test-data")
+        .join(format!("{}.{}.{}", graph, variant, format))
+}
+
 //-----------------------------------------------------------------------------
 
 /// Seeds used by the randomized tests.
