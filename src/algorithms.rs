@@ -2,6 +2,7 @@
 
 use crate::Graph;
 
+use gbz::GraphName;
 use gbz::Orientation;
 
 use sha2::Digest;
@@ -11,8 +12,10 @@ use std::io::BufRead;
 
 //-----------------------------------------------------------------------------
 
+// FIXME: once we have test data for integration tests, add a test with a GFA with a graph name
 /// Builds a graph from the given GFA input.
 ///
+/// If there is a stable name stored in GFA headers, returns it as well.
 /// Returns an error if reading the input fails of if the GFA cannot be parsed.
 /// Passes through errors from the graph methods.
 ///
@@ -29,24 +32,28 @@ use std::io::BufRead;
 /// let filename = support::get_test_data("example.gfa");
 /// let file = OpenOptions::new().read(true).open(&filename).unwrap();
 /// let reader = BufReader::new(file);
-/// let graph = algorithms::parse_gfa::<GraphInt, _>(reader);
-/// assert!(graph.is_ok());
+/// let result = algorithms::parse_gfa::<GraphInt, _>(reader);
+/// assert!(result.is_ok());
 ///
-/// let graph = graph.unwrap();
+/// let (graph, name) = result.unwrap();
+/// assert!(name.is_none()); // The example graph does not store a name.
 /// let statistics = graph.statistics();
 /// assert_eq!(statistics.node_count, 12);
 /// assert_eq!(statistics.edge_count, 13);
 /// assert_eq!(statistics.total_sequence_length, 12);
 /// ```
-pub fn parse_gfa<G: Graph, R: BufRead>(reader: R) -> Result<G, String> {
+pub fn parse_gfa<G: Graph, R: BufRead>(reader: R) -> Result<(G, Option<GraphName>), String> {
     let mut graph = G::new();
+    let mut header_lines = Vec::new();
     for (i, line) in reader.split(b'\n').enumerate() {
         let line = line.map_err(|e| format!("Error reading GFA line {}: {}", i + 1, e))?;
         if line.is_empty() {
             continue;
         }
-        // FIXME: Parse `GraphName` from header lines and return it somehow.
-        if line[0] == b'S' {
+        if line[0] == b'H' {
+            let line = String::from_utf8_lossy_owned(line);
+            header_lines.push(line);
+        } else if line[0] == b'S' {
             let fields: Vec<&[u8]> = line.split(|&c| c == b'\t').collect();
             if fields.len() < 3 {
                 return Err(format!("Error parsing GFA line {}: not enough fields for a segment", i + 1));
@@ -68,7 +75,16 @@ pub fn parse_gfa<G: Graph, R: BufRead>(reader: R) -> Result<G, String> {
     }
     graph.finalize()?;
 
-    Ok(graph)
+    // Check if we can parse a `GraphName` from the header lines.
+    // Fail silently, as we are going to recompute the name if we cannot find one.
+    let name = GraphName::from_header_lines(&header_lines).unwrap_or_default();
+    let name = if name.has_name() {
+        Some(name)
+    } else {
+        None
+    };
+
+    Ok((graph, name))
 }
 
 //-----------------------------------------------------------------------------
@@ -168,7 +184,7 @@ mod tests {
             let graph_int = parse_gfa::<GraphInt, _>(reader);
             if !test_case.hash_gfa_int.is_empty() {
                 assert!(graph_int.is_ok(), "Failed to parse GraphInt {}", test_case.gfa_name);
-                let graph_int = graph_int.unwrap();
+                let (graph_int, _) = graph_int.unwrap();
                 let hash_int = hash::<Sha256, _>(&graph_int);
                 assert_eq!(&hash_int, test_case.hash_gfa_int, "Wrong hash for GraphInt {}", test_case.gfa_name);
             } else {
@@ -180,7 +196,7 @@ mod tests {
                 .open(&filename)
                 .unwrap();
             let reader = BufReader::new(file);
-            let graph_str: GraphStr = parse_gfa(reader).unwrap();
+            let (graph_str, _) : (GraphStr, Option<GraphName>) = parse_gfa(reader).unwrap();
             let hash_str = hash::<Sha256, _>(&graph_str);
             assert_eq!(&hash_str, test_case.hash_gfa_str, "Wrong hash for GraphStr {}", test_case.gfa_name);
         }

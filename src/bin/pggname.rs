@@ -61,7 +61,7 @@ fn hash_mode(config: &Config) -> Result<(), String> {
                     .map_err(|e| format!("Error saving GBZ file {}: {}", input_file, e))?;
             }
         } else {
-            let name = gfa_name(input_file)?;
+            let name = gfa_name(input_file, config)?;
             print_graph_name(&name, input_file);
         }
     }
@@ -129,7 +129,8 @@ fn is_gzip_compressed<R: BufRead>(reader: &mut R) -> io::Result<bool> {
 
 // Parses the GFA graph, using integer node identifiers if possible and string identifiers
 // otherwise. The file may be gzip-compressed.
-fn read_gfa<G: Graph>(input_file: &str) -> Result<G, String> {
+// If there is a stored name in the GFA headers, it will be returned as well.
+fn read_gfa<G: Graph>(input_file: &str) -> Result<(G, Option<GraphName>), String> {
     let mut options = OpenOptions::new();
     let gfa_file = options.read(true).open(input_file)
         .map_err(|e| format!("Error opening GFA file {}: {}", input_file, e))?;
@@ -167,35 +168,78 @@ fn gbz_name(
     Ok((name, stored))
 }
 
-// FIXME: Parse stored name from GFA headers and include it in the output.
 // Returns graph name, computing it as needed.
 // If the name is (re)computed, all existing information will be discarded.
-fn gfa_name(input_file: &str) -> Result<GraphName, String> {
+fn gfa_name(input_file: &str, config: &Config) -> Result<GraphName, String> {
     let hash = match read_gfa::<GraphInt>(input_file) {
-        Ok(graph) => pggname::stable_name(&graph),
-        Err(_) => pggname::stable_name(&read_gfa::<GraphStr>(input_file)?),
+        Ok((graph, Some(name))) => {
+            if config.recompute {
+                pggname::stable_name(&graph)
+            } else {
+                return Ok(name);
+            }
+        },
+        Ok((graph, None)) => pggname::stable_name(&graph),
+        Err(_) => {
+            match read_gfa::<GraphStr>(input_file) {
+                Ok((graph, Some(name))) => {
+                    if config.recompute {
+                        pggname::stable_name(&graph)
+                    } else {
+                        return Ok(name);
+                    }
+                },
+                Ok((graph, None)) => pggname::stable_name(&graph),
+                Err(_) => return Err(format!("Error reading GFA file {}", input_file)),
+            }
+        },
     };
     let name = GraphName::new(hash);
     Ok(name)
 }
 
-// FIXME: Parse stored name from GFA headers and include it in the output.
-// Returns (indexex graph, graph name).
+// Returns (indexex graph, graph name, stored name).
 // If the name is (re)computed, all existing information will be discarded.
-fn gfa_input(input_file: &str) -> Result<(IndexedGraph, GraphName), String> {
+fn gfa_input(input_file: &str, config: &Config) -> Result<(IndexedGraph, GraphName, GraphName), String> {
     match read_gfa::<GraphInt>(input_file) {
-        Ok(graph) => {
+        Ok((graph, Some(stored))) => {
+            let name = if config.recompute {
+                let hash = pggname::stable_name(&graph);
+                GraphName::new(hash)
+            } else {
+                stored.clone()
+            };
+            let graph = IndexedGraph::from(&graph);
+            Ok((graph, name, stored))
+        },
+        Ok((graph, None)) => {
             let hash = pggname::stable_name(&graph);
             let name = GraphName::new(hash);
+            let stored = GraphName::default();
             let graph = IndexedGraph::from(&graph);
-            Ok((graph, name))
+            Ok((graph, name, stored))
         },
         Err(_) => {
-            let graph = read_gfa::<GraphStr>(input_file)?;
-            let hash = pggname::stable_name(&graph);
-            let name = GraphName::new(hash);
-            let graph = IndexedGraph::from(&graph);
-            Ok((graph, name))
+            match read_gfa::<GraphStr>(input_file) {
+                Ok((graph, Some(stored))) => {
+                    let name = if config.recompute {
+                        let hash = pggname::stable_name(&graph);
+                        GraphName::new(hash)
+                    } else {
+                        stored.clone()
+                    };
+                    let graph = IndexedGraph::from(&graph);
+                    Ok((graph, name, stored))
+                },
+                Ok((graph, None)) => {
+                    let hash = pggname::stable_name(&graph);
+                    let name = GraphName::new(hash);
+                    let stored = GraphName::default();
+                    let graph = IndexedGraph::from(&graph);
+                    Ok((graph, name, stored))
+                },
+                Err(_) => return Err(format!("Error reading GFA file {}", input_file)),
+            }
         },
     }
 }
@@ -232,15 +276,10 @@ impl Input {
         if GBZ::is_gbz(input_file) {
             let (graph, version) = read_gbz(input_file)?;
             let (name, stored) = gbz_name(&graph, input_file, config)?;
-            Ok(Input { filename, source: TopologySource::Gbz { graph, version }, name, stored })
+            Ok(Input { filename, source: TopologySource::Gbz { graph, version }, name, stored, })
         } else {
-            let (graph, name) = gfa_input(input_file)?;
-            Ok(Input {
-                filename,
-                source: TopologySource::Gfa(graph),
-                name,
-                stored: GraphName::default(),
-            })
+            let (graph, name, stored) = gfa_input(input_file, config)?;
+            Ok(Input { filename, source: TopologySource::Gfa(graph), name, stored, })
         }
     }
 

@@ -362,7 +362,7 @@ mod tests
     }
 
     fn gfa_text(text: &str) -> IndexedGraph {
-        let graph: GraphStr = algorithms::parse_gfa(BufReader::new(text.as_bytes())).unwrap();
+        let (graph, _) = algorithms::parse_gfa::<GraphStr, _>(BufReader::new(text.as_bytes())).unwrap();
         IndexedGraph::from(&graph)
     }
 
@@ -431,7 +431,7 @@ mod tests
     fn backends_agree() {
         let path = support::get_test_data("example.gfa");
         let file = OpenOptions::new().read(true).open(&path).unwrap();
-        let gfa: GraphStr = algorithms::parse_gfa(BufReader::new(file)).unwrap();
+        let (gfa, _) = algorithms::parse_gfa::<GraphStr, _>(BufReader::new(file)).unwrap();
         let from_gfa = IndexedGraph::from(&gfa);
 
         let path = support::get_test_data("example.gbz");
@@ -449,7 +449,7 @@ mod tests
         // The two components of `example.gfa` have the same sequences but different structure.
         let path = support::get_test_data("example.gfa");
         let file = OpenOptions::new().read(true).open(&path).unwrap();
-        let gfa: GraphStr = algorithms::parse_gfa(BufReader::new(file)).unwrap();
+        let (gfa, _) = algorithms::parse_gfa::<GraphStr, _>(BufReader::new(file)).unwrap();
         let graph = IndexedGraph::from(&gfa);
 
         let coloring = Coloring::new(&graph, &Options::default());

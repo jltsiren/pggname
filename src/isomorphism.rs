@@ -292,7 +292,7 @@ impl fmt::Display for UnitigIsomorphism {
 /// // The same graph as GFA and as GBZ.
 /// let filename = support::get_test_data("example.gfa");
 /// let file = OpenOptions::new().read(true).open(&filename).unwrap();
-/// let gfa: GraphInt = algorithms::parse_gfa(BufReader::new(file)).unwrap();
+/// let (gfa, _) = algorithms::parse_gfa::<GraphInt, _>(BufReader::new(file)).unwrap();
 /// let from_gfa = IndexedGraph::from(&gfa);
 ///
 /// let filename = support::get_test_data("example.gbz");

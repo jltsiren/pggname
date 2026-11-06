@@ -18,14 +18,14 @@ use std::io::BufReader;
 //-----------------------------------------------------------------------------
 
 fn gfa_text(text: &str) -> IndexedGraph {
-    let graph: GraphStr = algorithms::parse_gfa(BufReader::new(text.as_bytes())).unwrap();
+    let (graph, _) = algorithms::parse_gfa::<GraphStr, _>(BufReader::new(text.as_bytes())).unwrap();
     IndexedGraph::from(&graph)
 }
 
 fn gfa_file(filename: &'static str) -> IndexedGraph {
     let path = support::get_test_data(filename);
     let file = OpenOptions::new().read(true).open(&path).unwrap();
-    let graph: GraphInt = algorithms::parse_gfa(BufReader::new(file)).unwrap();
+    let (graph, _) = algorithms::parse_gfa::<GraphInt, _>(BufReader::new(file)).unwrap();
     IndexedGraph::from(&graph)
 }
 
@@ -236,7 +236,7 @@ fn chopped_graphs_are_not_isomorphic() {
     let from_gfa = {
         let path = support::get_test_data("translation.gfa");
         let file = OpenOptions::new().read(true).open(&path).unwrap();
-        let graph: GraphStr = algorithms::parse_gfa(BufReader::new(file)).unwrap();
+        let (graph, _) = algorithms::parse_gfa::<GraphStr, _>(BufReader::new(file)).unwrap();
         IndexedGraph::from(&graph)
     };
     let gbz = gbz_file("translation.gbz");

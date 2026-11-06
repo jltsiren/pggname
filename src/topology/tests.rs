@@ -18,7 +18,7 @@ use std::io::BufReader;
 fn gfa_graph<G: Graph>(filename: &'static str) -> G {
     let path = support::get_test_data(filename);
     let file = OpenOptions::new().read(true).open(&path).unwrap();
-    algorithms::parse_gfa(BufReader::new(file)).unwrap()
+    algorithms::parse_gfa::<G, _>(BufReader::new(file)).unwrap().0
 }
 
 fn gbz_graph(filename: &'static str) -> GBZ {
@@ -27,7 +27,7 @@ fn gbz_graph(filename: &'static str) -> GBZ {
 }
 
 fn parse_gfa_text<G: Graph>(text: &str) -> G {
-    algorithms::parse_gfa(BufReader::new(text.as_bytes())).unwrap()
+    algorithms::parse_gfa::<G, _>(BufReader::new(text.as_bytes())).unwrap().0
 }
 
 // Rebuilds a graph from the topological view alone.

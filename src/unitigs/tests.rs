@@ -14,7 +14,7 @@ use std::io::BufReader;
 //-----------------------------------------------------------------------------
 
 fn gfa_text(text: &str) -> IndexedGraph {
-    let graph: GraphStr = algorithms::parse_gfa(BufReader::new(text.as_bytes())).unwrap();
+    let (graph, _) = algorithms::parse_gfa::<GraphStr, _>(BufReader::new(text.as_bytes())).unwrap();
     IndexedGraph::from(&graph)
 }
 
@@ -175,7 +175,7 @@ fn chopping_does_not_change_the_unitigs() {
 fn chopping_a_real_graph() {
     let path = support::get_test_data("example.gfa");
     let file = std::fs::OpenOptions::new().read(true).open(&path).unwrap();
-    let graph: GraphStr = algorithms::parse_gfa(BufReader::new(file)).unwrap();
+    let (graph, _) = algorithms::parse_gfa::<GraphStr, _>(BufReader::new(file)).unwrap();
     let graph = IndexedGraph::from(&graph);
 
     let unitigs = Unitigs::new(&graph).unwrap();
