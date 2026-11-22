@@ -1,6 +1,6 @@
 # Pggname releases
 
-## Current version
+## Pggname 0.4.0 (2026-11-21)
 
 * Major rewrite of the `pggname` tool:
   * Two graphs can be compared for identity, a subgraph relationship, or isomorphism.

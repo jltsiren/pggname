@@ -6,8 +6,8 @@ use gbz::GraphName;
 use gbz::Orientation;
 
 use sha2::Digest;
-use sha2::digest;
 
+use std::fmt::Write;
 use std::io::BufRead;
 
 //-----------------------------------------------------------------------------
@@ -89,14 +89,17 @@ pub fn parse_gfa<G: Graph, R: BufRead>(reader: R) -> Result<(G, Option<GraphName
 //-----------------------------------------------------------------------------
 
 /// Computes the given hash of the canonical GFA representation of the given graph.
-pub fn hash<D: Digest, G: Graph>(graph: &G) -> String
-    where digest::Output<D>: core::fmt::LowerHex {
+pub fn hash<D: Digest, G: Graph>(graph: &G) -> String {
     let mut hasher = D::new();
     for bytes in graph.serialized_node_iter() {
         hasher.update(&bytes);
     }
     let hash = hasher.finalize();
-    format!("{:x}", hash)
+    let mut result = String::with_capacity(2 * hash.len());
+    for byte in hash.iter() {
+        write!(result, "{:02x}", byte).unwrap();
+    }
+    result
 }
 
 /// Computes the stable name (pggname) of the given graph.

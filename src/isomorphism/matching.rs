@@ -536,8 +536,8 @@ fn interchangeable_classes<A: Topology, B: Topology>(
     let mut result = vec![false; classes.len()];
 
     for (class, flag) in result.iter_mut().enumerate() {
-        let here = members_of_class(&first_members.0, &first_members.1, class as usize);
-        let there = members_of_class(&second_members.0, &second_members.1, class as usize);
+        let here = members_of_class(&first_members.0, &first_members.1, class);
+        let there = members_of_class(&second_members.0, &second_members.1, class);
         if here.len() < 2 {
             continue;
         }

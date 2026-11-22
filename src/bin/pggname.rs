@@ -36,7 +36,7 @@ fn compare_mode(config: &Config) -> Result<(), String> {
     let mut second = Input::load(&config.input_files[1], config)?;
     print_graph_name(&second.name, &second.filename);
     let verdict = compare_inputs(&first, &second, config)?;
-    println!("{}",verdict.to_string());
+    println!("{}", verdict);
 
     if config.store_name {
         comparison::update_relationships(verdict, &mut first.name, &mut second.name);
@@ -238,7 +238,7 @@ fn gfa_input(input_file: &str, config: &Config) -> Result<(IndexedGraph, GraphNa
                     let graph = IndexedGraph::from(&graph);
                     Ok((graph, name, stored))
                 },
-                Err(_) => return Err(format!("Error reading GFA file {}", input_file)),
+                Err(_) => Err(format!("Error reading GFA file {}", input_file)),
             }
         },
     }
@@ -326,18 +326,13 @@ fn compare<A: Topology, B: Topology>(
         first, second, first_name, second_name, &options
     )?;
 
-    if let Some(filename) = &config.translation_file {
-        match translation {
-            Some(translation) => {
-                let file = File::create(filename)
-                    .map_err(|e| format!("Error creating translation file {}: {}", filename, e))?;
-                let mut writer = BufWriter::new(file);
-                isomorphism::write_translation(first, second, &translation, &mut writer)
-                    .and_then(|()| writer.flush())
-                    .map_err(|e| format!("Error writing translation file {}: {}", filename, e))?;
-            },
-            None => (),
-        }
+    if let Some(filename) = &config.translation_file && let Some(translation) = translation {
+        let file = File::create(filename)
+            .map_err(|e| format!("Error creating translation file {}: {}", filename, e))?;
+        let mut writer = BufWriter::new(file);
+        isomorphism::write_translation(first, second, &translation, &mut writer)
+            .and_then(|()| writer.flush())
+            .map_err(|e| format!("Error writing translation file {}: {}", filename, e))?;
     }
 
     Ok(verdict)
